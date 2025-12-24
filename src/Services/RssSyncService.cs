@@ -483,6 +483,32 @@ public class RssSyncService : BackgroundService
         };
 
         db.DownloadQueue.Add(queueItem);
+
+        // Save grab history for potential re-grabbing (Sportarr-exclusive feature)
+        // This allows users to re-download the exact same release if they lose their media files
+        var indexerRecord = await db.Indexers
+            .FirstOrDefaultAsync(i => i.Name == release.Indexer, cancellationToken);
+        var grabHistory = new GrabHistory
+        {
+            EventId = evt.Id,
+            Title = release.Title,
+            Indexer = release.Indexer,
+            IndexerId = indexerRecord?.Id,
+            DownloadUrl = release.DownloadUrl,
+            Guid = release.Guid,
+            Protocol = release.Protocol,
+            TorrentInfoHash = release.TorrentInfoHash,
+            Size = release.Size,
+            Quality = release.Quality,
+            Codec = release.Codec,
+            Source = release.Source,
+            QualityScore = release.QualityScore,
+            CustomFormatScore = release.CustomFormatScore,
+            GrabbedAt = DateTime.UtcNow,
+            DownloadClientId = downloadClient.Id
+        };
+        db.GrabHistory.Add(grabHistory);
+
         await db.SaveChangesAsync(cancellationToken);
 
         return true;

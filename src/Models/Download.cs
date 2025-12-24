@@ -547,3 +547,128 @@ public enum AddDownloadErrorType
     Timeout,
     RateLimited
 }
+
+/// <summary>
+/// History of grabbed releases - stores original release info for re-grabbing
+/// This is a Sportarr-exclusive feature not available in Sonarr/Radarr.
+/// When users lose their media files but keep their database, they can
+/// re-grab the exact same releases they originally downloaded.
+/// </summary>
+public class GrabHistory
+{
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Event this grab was for
+    /// </summary>
+    public int EventId { get; set; }
+    public Event? Event { get; set; }
+
+    /// <summary>
+    /// Original release title from the indexer
+    /// </summary>
+    public required string Title { get; set; }
+
+    /// <summary>
+    /// The indexer name that provided this release
+    /// </summary>
+    public required string Indexer { get; set; }
+
+    /// <summary>
+    /// Indexer ID for re-grabbing (may be null if indexer was deleted)
+    /// </summary>
+    public int? IndexerId { get; set; }
+
+    /// <summary>
+    /// Download URL (torrent file URL, magnet link, or NZB URL)
+    /// </summary>
+    public required string DownloadUrl { get; set; }
+
+    /// <summary>
+    /// GUID from the indexer (for deduplication)
+    /// </summary>
+    public required string Guid { get; set; }
+
+    /// <summary>
+    /// Protocol: "Torrent" or "Usenet"
+    /// </summary>
+    public required string Protocol { get; set; }
+
+    /// <summary>
+    /// Torrent info hash (for torrents - allows magnet link fallback)
+    /// </summary>
+    public string? TorrentInfoHash { get; set; }
+
+    /// <summary>
+    /// Release size in bytes
+    /// </summary>
+    public long Size { get; set; }
+
+    /// <summary>
+    /// Quality string (e.g., "1080p WEB-DL")
+    /// </summary>
+    public string? Quality { get; set; }
+
+    /// <summary>
+    /// Video codec (H.264, HEVC, etc.)
+    /// </summary>
+    public string? Codec { get; set; }
+
+    /// <summary>
+    /// Video source (WEB-DL, BluRay, etc.)
+    /// </summary>
+    public string? Source { get; set; }
+
+    /// <summary>
+    /// Quality score at time of grab
+    /// </summary>
+    public int QualityScore { get; set; }
+
+    /// <summary>
+    /// Custom format score at time of grab
+    /// </summary>
+    public int CustomFormatScore { get; set; }
+
+    /// <summary>
+    /// Part name for multi-part events (e.g., "Prelims", "Main Card")
+    /// Null if not a multi-part grab
+    /// </summary>
+    public string? PartName { get; set; }
+
+    /// <summary>
+    /// When this release was grabbed
+    /// </summary>
+    public DateTime GrabbedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Whether the download was successfully imported
+    /// </summary>
+    public bool WasImported { get; set; } = false;
+
+    /// <summary>
+    /// When the file was imported (if applicable)
+    /// </summary>
+    public DateTime? ImportedAt { get; set; }
+
+    /// <summary>
+    /// Whether the media file currently exists on disk
+    /// Updated by disk scan service
+    /// </summary>
+    public bool FileExists { get; set; } = false;
+
+    /// <summary>
+    /// Last time we attempted to re-grab this release
+    /// Used to prevent spam re-grabs
+    /// </summary>
+    public DateTime? LastRegrabAttempt { get; set; }
+
+    /// <summary>
+    /// Number of times this has been re-grabbed
+    /// </summary>
+    public int RegrabCount { get; set; } = 0;
+
+    /// <summary>
+    /// Download client ID that was used for the original grab
+    /// </summary>
+    public int? DownloadClientId { get; set; }
+}

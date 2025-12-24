@@ -702,6 +702,33 @@ public class AutomaticSearchService
             };
 
             _db.DownloadQueue.Add(queueItem);
+
+            // Save grab history for potential re-grabbing (Sportarr-exclusive feature)
+            // This allows users to re-download the exact same release if they lose their media files
+            var indexerRecord = await _db.Indexers
+                .FirstOrDefaultAsync(i => i.Name == bestRelease.Indexer);
+            var grabHistory = new GrabHistory
+            {
+                EventId = eventId,
+                Title = bestRelease.Title,
+                Indexer = bestRelease.Indexer,
+                IndexerId = indexerRecord?.Id,
+                DownloadUrl = bestRelease.DownloadUrl,
+                Guid = bestRelease.Guid,
+                Protocol = bestRelease.Protocol,
+                TorrentInfoHash = bestRelease.TorrentInfoHash,
+                Size = bestRelease.Size,
+                Quality = bestRelease.Quality,
+                Codec = bestRelease.Codec,
+                Source = bestRelease.Source,
+                QualityScore = bestRelease.QualityScore,
+                CustomFormatScore = bestRelease.CustomFormatScore,
+                PartName = part,
+                GrabbedAt = DateTime.UtcNow,
+                DownloadClientId = downloadClient.Id
+            };
+            _db.GrabHistory.Add(grabHistory);
+
             await _db.SaveChangesAsync();
 
             // Immediately check download status (Sonarr/Radarr behavior)

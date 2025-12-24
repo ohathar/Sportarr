@@ -334,6 +334,19 @@ public class FileImportService
             eventInfo.FileSize = actualFileSize;
             eventInfo.Quality = _parser.BuildQualityString(parsed);
 
+            // Update grab history to mark as imported with file existing
+            // This enables the re-grab feature if files are later deleted
+            var grabHistoryEntry = await _db.GrabHistory
+                .Where(g => g.EventId == download.EventId && g.Title == download.Title)
+                .OrderByDescending(g => g.GrabbedAt)
+                .FirstOrDefaultAsync();
+            if (grabHistoryEntry != null)
+            {
+                grabHistoryEntry.WasImported = true;
+                grabHistoryEntry.ImportedAt = DateTime.UtcNow;
+                grabHistoryEntry.FileExists = true;
+            }
+
             await _db.SaveChangesAsync();
 
             _logger.LogInformation("Successfully imported: {Title} -> {Path}",

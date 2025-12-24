@@ -41,6 +41,7 @@ public class SportarrDbContext : DbContext
     public DbSet<MetadataProvider> MetadataProviders => Set<MetadataProvider>();
     public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
     public DbSet<RemotePathMapping> RemotePathMappings => Set<RemotePathMapping>();
+    public DbSet<GrabHistory> GrabHistory => Set<GrabHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -641,6 +642,35 @@ public class SportarrDbContext : DbContext
                   .OnDelete(DeleteBehavior.SetNull);
             entity.HasIndex(h => h.EventId);
             entity.HasIndex(h => h.ImportedAt);
+        });
+
+        // GrabHistory configuration - stores original release info for re-grabbing
+        modelBuilder.Entity<GrabHistory>(entity =>
+        {
+            entity.HasKey(g => g.Id);
+            entity.Property(g => g.Title).IsRequired().HasMaxLength(500);
+            entity.Property(g => g.Indexer).IsRequired().HasMaxLength(200);
+            entity.Property(g => g.DownloadUrl).IsRequired().HasMaxLength(2000);
+            entity.Property(g => g.Guid).IsRequired().HasMaxLength(500);
+            entity.Property(g => g.Protocol).IsRequired().HasMaxLength(50);
+            entity.Property(g => g.TorrentInfoHash).HasMaxLength(100);
+            entity.Property(g => g.Quality).HasMaxLength(100);
+            entity.Property(g => g.Codec).HasMaxLength(50);
+            entity.Property(g => g.Source).HasMaxLength(50);
+            entity.Property(g => g.PartName).HasMaxLength(100);
+
+            // Foreign key to Event - keep history when event is deleted
+            entity.HasOne(g => g.Event)
+                  .WithMany()
+                  .HasForeignKey(g => g.EventId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Indexes for efficient queries
+            entity.HasIndex(g => g.EventId);
+            entity.HasIndex(g => g.GrabbedAt);
+            entity.HasIndex(g => g.WasImported);
+            entity.HasIndex(g => g.FileExists);
+            entity.HasIndex(g => g.Guid); // For deduplication
         });
     }
 }
