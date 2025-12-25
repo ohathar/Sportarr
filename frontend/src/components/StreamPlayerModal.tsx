@@ -130,15 +130,20 @@ export default function StreamPlayerModal({
   const [ffmpegSessionId, setFfmpegSessionId] = useState<string | null>(null);
   const [videoReady, setVideoReady] = useState(false);
 
-  // Reset debug state when channel changes
+  // Reset state when modal opens or channel changes
   useEffect(() => {
-    setShowDebug(false);
-    setDebugInfo(null);
-    setLoadingDebug(false);
-    // Don't clear globalLogs here - let the player initialization logs accumulate
-    // Only clear the displayed logs state
-    setLogs([]);
-  }, [channelId]);
+    if (isOpen) {
+      // Reset videoReady so the callback ref can trigger player initialization
+      setVideoReady(false);
+      setShowDebug(false);
+      setDebugInfo(null);
+      setLoadingDebug(false);
+      setLogs([]);
+      setError(null);
+      setErrorDetails(null);
+      setIsLoading(true);
+    }
+  }, [isOpen, channelId]);
 
   // Log when modal opens to verify player support
   useEffect(() => {
@@ -646,7 +651,7 @@ export default function StreamPlayerModal({
       video.removeEventListener('stalled', handleStalled);
       cleanup();
     };
-  }, [isOpen, streamUrl, playbackMode, retryCount, videoReady]);
+  }, [isOpen, streamUrl, playbackMode, retryCount, videoReady, channelId]);
 
   const handleClose = async () => {
     await cleanup();
@@ -796,10 +801,11 @@ export default function StreamPlayerModal({
                   )}
 
                   <video
+                    key={`video-${channelId}`}
                     ref={(el) => {
                       (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
                       if (el && !videoReady) {
-                        log('debug', 'Video element mounted');
+                        log('debug', 'Video element mounted', { channelId });
                         setVideoReady(true);
                       }
                     }}
