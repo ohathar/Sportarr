@@ -15,6 +15,8 @@ import {
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import apiClient from '../../api/client';
+import { useTimezone } from '../../hooks/useTimezone';
+import { getDateInTimezone, formatTimeInTimezone, formatDateInTimezone } from '../../utils/timezone';
 
 // Types
 type RecordingStatus = 'Scheduled' | 'Recording' | 'Completed' | 'Failed' | 'Cancelled' | 'Importing' | 'Imported';
@@ -76,6 +78,7 @@ export default function DvrSchedulePage() {
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
+  const { timezone } = useTimezone();
 
   useEffect(() => {
     loadData();
@@ -149,14 +152,15 @@ export default function DvrSchedulePage() {
     return `${startMonth} ${startDay} - ${endMonth} ${endDay}, ${year}`;
   };
 
-  // Group recordings by date
+  // Group recordings by date (in user's timezone)
   const recordingsByDate = useMemo(() => {
     const grouped: Record<string, DvrRecording[]> = {};
     recordings.forEach(recording => {
       // Apply status filter
       if (filterStatus !== 'all' && recording.status !== filterStatus) return;
 
-      const date = new Date(recording.scheduledStart).toISOString().split('T')[0];
+      // Get the date in user's timezone
+      const date = getDateInTimezone(recording.scheduledStart, timezone);
       if (!grouped[date]) {
         grouped[date] = [];
       }
@@ -167,14 +171,14 @@ export default function DvrSchedulePage() {
       arr.sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
     });
     return grouped;
-  }, [recordings, filterStatus]);
+  }, [recordings, filterStatus, timezone]);
 
   const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return formatTimeInTimezone(dateString, timezone, { hour: '2-digit', minute: '2-digit' });
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    return formatDateInTimezone(dateString, timezone, { weekday: 'short', month: 'short', day: 'numeric' });
   };
 
   const getStatusIcon = (status: RecordingStatus) => {
@@ -211,9 +215,10 @@ export default function DvrSchedulePage() {
            date.getFullYear() === today.getFullYear();
   };
 
-  // Get recordings for a specific date (for calendar view)
+  // Get recordings for a specific date (for calendar view, respecting user's timezone)
   const getRecordingsForDate = (date: Date) => {
-    const dateStr = date.toISOString().split('T')[0];
+    // Format the calendar date as YYYY-MM-DD to match the keys in recordingsByDate
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     return recordingsByDate[dateStr] || [];
   };
 

@@ -13,6 +13,8 @@ import EventFileDetailModal from '../components/EventFileDetailModal';
 import LeagueFilesModal from '../components/LeagueFilesModal';
 import EventStatusBadge from '../components/EventStatusBadge';
 import { useSearchQueueStatus, useDownloadQueue } from '../api/hooks';
+import { useTimezone } from '../hooks/useTimezone';
+import { formatDateInTimezone } from '../utils/timezone';
 
 // Type for the league prop passed to AddLeagueModal
 interface ModalLeagueData {
@@ -143,6 +145,7 @@ export default function LeagueDetailPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { timezone } = useTimezone();
   const [manualSearchModal, setManualSearchModal] = useState<{ isOpen: boolean; eventId: number; eventTitle: string; part?: string; existingFiles?: EventFile[] }>({
     isOpen: false,
     eventId: 0,
@@ -1201,7 +1204,7 @@ export default function LeagueDetailPage() {
                       {/* Event Details */}
                       <div className="ml-7 md:ml-10 mt-2 space-y-1">
                         <div className="flex flex-wrap items-center gap-2 md:gap-3 text-xs md:text-sm text-gray-400">
-                          <span>{eventDate.toLocaleDateString('en-US', {
+                          <span>{formatDateInTimezone(event.eventDate, timezone, {
                             year: 'numeric',
                             month: 'short',
                             day: 'numeric'

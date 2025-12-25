@@ -6,6 +6,8 @@ import EventDetailsModal from '../components/EventDetailsModal';
 import BulkEditModal from '../components/BulkEditModal';
 import apiClient from '../api/client';
 import type { Event, Image } from '../types';
+import { useTimezone } from '../hooks/useTimezone';
+import { formatDateInTimezone } from '../utils/timezone';
 
 // Helper function to get image URL from either Image object or string
 const getImageUrl = (images: Image[] | string[] | undefined): string | undefined => {
@@ -53,6 +55,7 @@ interface SearchResult {
 
 export default function EventsPage() {
   const { data: events, isLoading, error, refetch } = useEvents();
+  const { timezone } = useTimezone();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -257,7 +260,7 @@ export default function EventsPage() {
                             <h3 className="text-white font-semibold line-clamp-1">{event.title}</h3>
                             <p className="text-red-400 text-sm font-medium">{event.organization}</p>
                             <p className="text-gray-400 text-sm">
-                              {new Date(event.eventDate).toLocaleDateString('en-US', {
+                              {formatDateInTimezone(event.eventDate, timezone, {
                                 year: 'numeric',
                                 month: 'short',
                                 day: 'numeric',
@@ -386,7 +389,7 @@ export default function EventsPage() {
                 <p className="text-red-400 font-semibold">{event.organization}</p>
 
                 <p className="text-gray-400">
-                  {new Date(event.eventDate).toLocaleDateString('en-US', {
+                  {formatDateInTimezone(event.eventDate, timezone, {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',

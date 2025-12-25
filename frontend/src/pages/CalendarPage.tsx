@@ -2,6 +2,8 @@ import { useEvents } from '../api/hooks';
 import { ChevronLeftIcon, ChevronRightIcon, TvIcon, FunnelIcon } from '@heroicons/react/24/outline';
 import { useState } from 'react';
 import type { Event, Image } from '../types';
+import { useTimezone } from '../hooks/useTimezone';
+import { convertToTimezone, getDateInTimezone } from '../utils/timezone';
 
 // Helper function to get image URL from either Image object or string
 const getImageUrl = (images: Image[] | string[] | undefined): string | undefined => {
@@ -30,6 +32,7 @@ const getSportColors = (sport: string) => {
 
 export default function CalendarPage() {
   const { data: events, isLoading, error } = useEvents();
+  const { timezone } = useTimezone();
   const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
   const [filterSport, setFilterSport] = useState<string>('all');
   const [filterTvOnly, setFilterTvOnly] = useState(false);
@@ -60,14 +63,12 @@ export default function CalendarPage() {
     return days;
   };
 
-  // Filter events for a specific day
+  // Filter events for a specific day (respecting user's timezone)
   const getEventsForDay = (date: Date, allEvents: Event[] | undefined) => {
     if (!allEvents) return [];
 
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
+    // Get the date string for comparison (in user's timezone)
+    const targetDateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
     return allEvents.filter(event => {
       if (!event.monitored) return false; // Only show monitored events
@@ -78,8 +79,9 @@ export default function CalendarPage() {
       // Apply TV availability filter
       if (filterTvOnly && !event.broadcast) return false;
 
-      const eventDate = new Date(event.eventDate);
-      return eventDate >= dayStart && eventDate <= dayEnd;
+      // Convert the event date from UTC to user's timezone and compare
+      const eventDateStr = getDateInTimezone(event.eventDate, timezone);
+      return eventDateStr === targetDateStr;
     });
   };
 
