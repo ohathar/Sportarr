@@ -10,7 +10,11 @@ import {
   LinkIcon,
   FunnelIcon,
   BoltIcon,
+  StarIcon as StarIconOutline,
+  EyeSlashIcon,
+  EyeIcon,
 } from '@heroicons/react/24/outline';
+import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
 import { toast } from 'sonner';
 import apiClient from '../../api/client';
 import SettingsHeader from '../../components/SettingsHeader';
@@ -37,6 +41,8 @@ interface IptvChannel {
   detectedNetwork?: string;
   mappedLeagueIds: number[];
   sourceName?: string;
+  isFavorite: boolean;
+  isHidden: boolean;
 }
 
 interface League {
@@ -73,6 +79,8 @@ export default function IptvChannelsSettings() {
   const [filterSportsOnly, setFilterSportsOnly] = useState(true);
   const [filterEnabledOnly, setFilterEnabledOnly] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterFavoritesOnly, setFilterFavoritesOnly] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
   // Selection state for bulk operations
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -149,8 +157,11 @@ export default function IptvChannelsSettings() {
   // Filter channels client-side for instant feedback
   const filteredChannels = useMemo(() => {
     return channels.filter((channel) => {
+      // Hide hidden channels unless showHidden is enabled
+      if (!showHidden && channel.isHidden) return false;
       if (filterSportsOnly && !channel.isSportsChannel) return false;
       if (filterEnabledOnly && !channel.isEnabled) return false;
+      if (filterFavoritesOnly && !channel.isFavorite) return false;
       if (filterStatus !== 'all' && channel.status.toLowerCase() !== filterStatus) return false;
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -161,7 +172,7 @@ export default function IptvChannelsSettings() {
       }
       return true;
     });
-  }, [channels, filterSportsOnly, filterEnabledOnly, filterStatus, searchQuery]);
+  }, [channels, filterSportsOnly, filterEnabledOnly, filterFavoritesOnly, showHidden, filterStatus, searchQuery]);
 
   // Selection handlers
   const handleToggleSelect = (id: number) => {
@@ -335,6 +346,90 @@ export default function IptvChannelsSettings() {
     }
   };
 
+  // Favorite operations
+  const handleToggleFavorite = async (channel: IptvChannel) => {
+    try {
+      const newStatus = !channel.isFavorite;
+      await apiClient.post(`/iptv/channels/${channel.id}/favorite`, { isFavorite: newStatus });
+      setChannels((prev) => prev.map((c) => (c.id === channel.id ? { ...c, isFavorite: newStatus } : c)));
+      toast.success(newStatus ? 'Added to Favorites' : 'Removed from Favorites');
+    } catch (err: any) {
+      toast.error('Failed to update favorite status', { description: err.message });
+    }
+  };
+
+  const handleBulkFavorite = async (isFavorite: boolean) => {
+    try {
+      const channelIds = Array.from(selectedIds);
+      await apiClient.post('/iptv/channels/bulk/favorite', { channelIds, isFavorite });
+      setChannels((prev) =>
+        prev.map((c) => (channelIds.includes(c.id) ? { ...c, isFavorite } : c))
+      );
+      setSelectedIds(new Set());
+      toast.success(`${isFavorite ? 'Added' : 'Removed'} ${channelIds.length} channels ${isFavorite ? 'to' : 'from'} favorites`);
+    } catch (err: any) {
+      toast.error('Bulk favorite operation failed', { description: err.message });
+    }
+  };
+
+  // Hide operations
+  const handleToggleHidden = async (channel: IptvChannel) => {
+    try {
+      const newStatus = !channel.isHidden;
+      await apiClient.post(`/iptv/channels/${channel.id}/hidden`, { isHidden: newStatus });
+      setChannels((prev) => prev.map((c) => (c.id === channel.id ? { ...c, isHidden: newStatus } : c)));
+      toast.success(newStatus ? 'Channel Hidden' : 'Channel Visible');
+    } catch (err: any) {
+      toast.error('Failed to update hidden status', { description: err.message });
+    }
+  };
+
+  const handleBulkHidden = async (isHidden: boolean) => {
+    try {
+      const channelIds = Array.from(selectedIds);
+      await apiClient.post('/iptv/channels/bulk/hidden', { channelIds, isHidden });
+      setChannels((prev) =>
+        prev.map((c) => (channelIds.includes(c.id) ? { ...c, isHidden } : c))
+      );
+      setSelectedIds(new Set());
+      toast.success(`${isHidden ? 'Hid' : 'Showed'} ${channelIds.length} channels`);
+    } catch (err: any) {
+      toast.error('Bulk hide operation failed', { description: err.message });
+    }
+  };
+
+  const handleHideNonSports = async () => {
+    try {
+      const { data } = await apiClient.post<{ success: boolean; channelsHidden: number; message: string }>(
+        '/iptv/channels/hide-non-sports'
+      );
+      if (data.success) {
+        await loadChannels(0, true);
+        toast.success('Non-sports channels hidden', {
+          description: data.message,
+        });
+      }
+    } catch (err: any) {
+      toast.error('Failed to hide non-sports channels', { description: err.message });
+    }
+  };
+
+  const handleUnhideAll = async () => {
+    try {
+      const { data } = await apiClient.post<{ success: boolean; channelsUnhidden: number; message: string }>(
+        '/iptv/channels/unhide-all'
+      );
+      if (data.success) {
+        await loadChannels(0, true);
+        toast.success('All channels visible', {
+          description: data.message,
+        });
+      }
+    } catch (err: any) {
+      toast.error('Failed to unhide channels', { description: err.message });
+    }
+  };
+
   // Mapping operations
   const openMappingModal = async (channel: IptvChannel) => {
     setMappingChannel(channel);
@@ -500,7 +595,7 @@ export default function IptvChannelsSettings() {
             </div>
 
             {/* Filters */}
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-4 flex-wrap gap-2">
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -514,11 +609,37 @@ export default function IptvChannelsSettings() {
               <label className="flex items-center space-x-2 cursor-pointer">
                 <input
                   type="checkbox"
+                  checked={filterFavoritesOnly}
+                  onChange={(e) => setFilterFavoritesOnly(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-yellow-600 focus:ring-yellow-600"
+                />
+                <span className="text-sm text-gray-300 flex items-center space-x-1">
+                  <StarIconSolid className="w-4 h-4 text-yellow-400" />
+                  <span>Favorites</span>
+                </span>
+              </label>
+
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
                   checked={filterEnabledOnly}
                   onChange={(e) => setFilterEnabledOnly(e.target.checked)}
                   className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-red-600 focus:ring-red-600"
                 />
                 <span className="text-sm text-gray-300">Enabled Only</span>
+              </label>
+
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showHidden}
+                  onChange={(e) => setShowHidden(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-gray-600 focus:ring-gray-600"
+                />
+                <span className="text-sm text-gray-300 flex items-center space-x-1">
+                  <EyeSlashIcon className="w-4 h-4 text-gray-400" />
+                  <span>Show Hidden</span>
+                </span>
               </label>
 
               <select
@@ -545,7 +666,7 @@ export default function IptvChannelsSettings() {
 
           {/* Bulk Actions */}
           {selectedIds.size > 0 && (
-            <div className="mt-4 pt-4 border-t border-gray-800 flex items-center space-x-4">
+            <div className="mt-4 pt-4 border-t border-gray-800 flex items-center flex-wrap gap-2">
               <span className="text-sm text-gray-400">{selectedIds.size} selected</span>
               <button
                 onClick={() => handleBulkEnable(true)}
@@ -558,6 +679,34 @@ export default function IptvChannelsSettings() {
                 className="px-3 py-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 rounded text-sm transition-colors"
               >
                 Disable All
+              </button>
+              <button
+                onClick={() => handleBulkFavorite(true)}
+                className="px-3 py-1.5 bg-yellow-900/30 hover:bg-yellow-900/50 text-yellow-400 rounded text-sm transition-colors flex items-center space-x-1"
+              >
+                <StarIconSolid className="w-4 h-4" />
+                <span>Favorite</span>
+              </button>
+              <button
+                onClick={() => handleBulkFavorite(false)}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded text-sm transition-colors flex items-center space-x-1"
+              >
+                <StarIconOutline className="w-4 h-4" />
+                <span>Unfavorite</span>
+              </button>
+              <button
+                onClick={() => handleBulkHidden(true)}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded text-sm transition-colors flex items-center space-x-1"
+              >
+                <EyeSlashIcon className="w-4 h-4" />
+                <span>Hide</span>
+              </button>
+              <button
+                onClick={() => handleBulkHidden(false)}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded text-sm transition-colors flex items-center space-x-1"
+              >
+                <EyeIcon className="w-4 h-4" />
+                <span>Unhide</span>
               </button>
               <button
                 onClick={handleBulkTest}
@@ -574,6 +723,24 @@ export default function IptvChannelsSettings() {
               </button>
             </div>
           )}
+
+          {/* Quick Actions */}
+          <div className="mt-4 pt-4 border-t border-gray-800 flex items-center space-x-4">
+            <button
+              onClick={handleHideNonSports}
+              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm transition-colors flex items-center space-x-1"
+            >
+              <EyeSlashIcon className="w-4 h-4" />
+              <span>Hide All Non-Sports</span>
+            </button>
+            <button
+              onClick={handleUnhideAll}
+              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm transition-colors flex items-center space-x-1"
+            >
+              <EyeIcon className="w-4 h-4" />
+              <span>Unhide All</span>
+            </button>
+          </div>
         </div>
 
         {/* Channels Table */}
@@ -630,7 +797,11 @@ export default function IptvChannelsSettings() {
                           </div>
                         )}
                         <div>
-                          <div className="font-medium text-white">{channel.name}</div>
+                          <div className="font-medium text-white flex items-center space-x-1">
+                            <span className={channel.isHidden ? 'text-gray-500' : ''}>{channel.name}</span>
+                            {channel.isFavorite && <StarIconSolid className="w-3 h-3 text-yellow-400" />}
+                            {channel.isHidden && <EyeSlashIcon className="w-3 h-3 text-gray-500" />}
+                          </div>
                           {channel.channelNumber && (
                             <div className="text-xs text-gray-500">Ch. {channel.channelNumber}</div>
                           )}
@@ -673,6 +844,28 @@ export default function IptvChannelsSettings() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center space-x-1">
+                        <button
+                          onClick={() => handleToggleFavorite(channel)}
+                          className="p-1.5 hover:bg-gray-800 rounded transition-colors"
+                          title={channel.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
+                        >
+                          {channel.isFavorite ? (
+                            <StarIconSolid className="w-4 h-4 text-yellow-400" />
+                          ) : (
+                            <StarIconOutline className="w-4 h-4 text-gray-400 hover:text-yellow-400" />
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleToggleHidden(channel)}
+                          className="p-1.5 text-gray-400 hover:bg-gray-800 rounded transition-colors"
+                          title={channel.isHidden ? 'Show Channel' : 'Hide Channel'}
+                        >
+                          {channel.isHidden ? (
+                            <EyeSlashIcon className="w-4 h-4 text-gray-500" />
+                          ) : (
+                            <EyeIcon className="w-4 h-4 hover:text-gray-300" />
+                          )}
+                        </button>
                         <button
                           onClick={() => handleTestChannel(channel.id)}
                           disabled={testingChannelIds.has(channel.id)}

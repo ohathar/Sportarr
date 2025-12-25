@@ -6225,6 +6225,80 @@ app.MapPost("/api/iptv/channels/{channelId:int}/sports", async (int channelId, H
     return Results.Ok(IptvChannelResponse.FromEntity(channel));
 });
 
+// Set channel favorite status
+app.MapPost("/api/iptv/channels/{channelId:int}/favorite", async (int channelId, HttpRequest request, Sportarr.Api.Services.IptvSourceService iptvService) =>
+{
+    using var reader = new StreamReader(request.Body);
+    var json = await reader.ReadToEndAsync();
+    var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+    var isFavorite = data.TryGetProperty("isFavorite", out var prop) && prop.GetBoolean();
+
+    var channel = await iptvService.SetChannelFavoriteStatusAsync(channelId, isFavorite);
+    if (channel == null)
+        return Results.NotFound();
+    return Results.Ok(IptvChannelResponse.FromEntity(channel));
+});
+
+// Set channel hidden status
+app.MapPost("/api/iptv/channels/{channelId:int}/hidden", async (int channelId, HttpRequest request, Sportarr.Api.Services.IptvSourceService iptvService) =>
+{
+    using var reader = new StreamReader(request.Body);
+    var json = await reader.ReadToEndAsync();
+    var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+    var isHidden = data.TryGetProperty("isHidden", out var prop) && prop.GetBoolean();
+
+    var channel = await iptvService.SetChannelHiddenStatusAsync(channelId, isHidden);
+    if (channel == null)
+        return Results.NotFound();
+    return Results.Ok(IptvChannelResponse.FromEntity(channel));
+});
+
+// Bulk set channels as favorites
+app.MapPost("/api/iptv/channels/bulk/favorite", async (HttpRequest request, Sportarr.Api.Services.IptvSourceService iptvService, ILogger<Program> logger) =>
+{
+    using var reader = new StreamReader(request.Body);
+    var json = await reader.ReadToEndAsync();
+    var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+
+    var channelIds = data.GetProperty("channelIds").EnumerateArray().Select(e => e.GetInt32()).ToList();
+    var isFavorite = data.TryGetProperty("isFavorite", out var prop) && prop.GetBoolean();
+
+    logger.LogInformation("[IPTV] Bulk {Action} {Count} channels as favorites", isFavorite ? "marking" : "unmarking", channelIds.Count);
+    var count = await iptvService.BulkSetChannelsFavoriteAsync(channelIds, isFavorite);
+    return Results.Ok(new { success = true, updatedCount = count });
+});
+
+// Bulk hide/unhide channels
+app.MapPost("/api/iptv/channels/bulk/hidden", async (HttpRequest request, Sportarr.Api.Services.IptvSourceService iptvService, ILogger<Program> logger) =>
+{
+    using var reader = new StreamReader(request.Body);
+    var json = await reader.ReadToEndAsync();
+    var data = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json);
+
+    var channelIds = data.GetProperty("channelIds").EnumerateArray().Select(e => e.GetInt32()).ToList();
+    var isHidden = data.TryGetProperty("isHidden", out var prop) && prop.GetBoolean();
+
+    logger.LogInformation("[IPTV] Bulk {Action} {Count} channels", isHidden ? "hiding" : "unhiding", channelIds.Count);
+    var count = await iptvService.BulkSetChannelsHiddenAsync(channelIds, isHidden);
+    return Results.Ok(new { success = true, updatedCount = count });
+});
+
+// Hide all non-sports channels
+app.MapPost("/api/iptv/channels/hide-non-sports", async (Sportarr.Api.Services.IptvSourceService iptvService, ILogger<Program> logger) =>
+{
+    logger.LogInformation("[IPTV] Hiding all non-sports channels");
+    var count = await iptvService.HideNonSportsChannelsAsync();
+    return Results.Ok(new { success = true, hiddenCount = count });
+});
+
+// Unhide all channels
+app.MapPost("/api/iptv/channels/unhide-all", async (Sportarr.Api.Services.IptvSourceService iptvService, ILogger<Program> logger) =>
+{
+    logger.LogInformation("[IPTV] Unhiding all channels");
+    var count = await iptvService.UnhideAllChannelsAsync();
+    return Results.Ok(new { success = true, unhiddenCount = count });
+});
+
 // Bulk enable/disable channels
 app.MapPost("/api/iptv/channels/bulk/enable", async (HttpRequest request, Sportarr.Api.Services.IptvSourceService iptvService, ILogger<Program> logger) =>
 {

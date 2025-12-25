@@ -568,6 +568,125 @@ public class IptvSourceService
     }
 
     /// <summary>
+    /// Set channel favorite status
+    /// </summary>
+    public async Task<IptvChannel?> SetChannelFavoriteStatusAsync(int channelId, bool isFavorite)
+    {
+        var channel = await _db.IptvChannels.FindAsync(channelId);
+        if (channel == null)
+            return null;
+
+        channel.IsFavorite = isFavorite;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("[IPTV] Channel {ChannelId} favorite status set to {IsFavorite}", channelId, isFavorite);
+        return channel;
+    }
+
+    /// <summary>
+    /// Set channel hidden status
+    /// </summary>
+    public async Task<IptvChannel?> SetChannelHiddenStatusAsync(int channelId, bool isHidden)
+    {
+        var channel = await _db.IptvChannels.FindAsync(channelId);
+        if (channel == null)
+            return null;
+
+        channel.IsHidden = isHidden;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("[IPTV] Channel {ChannelId} hidden status set to {IsHidden}", channelId, isHidden);
+        return channel;
+    }
+
+    /// <summary>
+    /// Bulk set channels as favorites
+    /// </summary>
+    public async Task<int> BulkSetChannelsFavoriteAsync(List<int> channelIds, bool isFavorite)
+    {
+        var channels = await _db.IptvChannels
+            .Where(c => channelIds.Contains(c.Id))
+            .ToListAsync();
+
+        foreach (var channel in channels)
+        {
+            channel.IsFavorite = isFavorite;
+        }
+
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("[IPTV] Bulk {Action} {Count} channels as favorites",
+            isFavorite ? "added" : "removed", channels.Count);
+
+        return channels.Count;
+    }
+
+    /// <summary>
+    /// Bulk set channels as hidden
+    /// </summary>
+    public async Task<int> BulkSetChannelsHiddenAsync(List<int> channelIds, bool isHidden)
+    {
+        var channels = await _db.IptvChannels
+            .Where(c => channelIds.Contains(c.Id))
+            .ToListAsync();
+
+        foreach (var channel in channels)
+        {
+            channel.IsHidden = isHidden;
+        }
+
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("[IPTV] Bulk {Action} {Count} channels",
+            isHidden ? "hid" : "unhid", channels.Count);
+
+        return channels.Count;
+    }
+
+    /// <summary>
+    /// Hide all non-sports channels
+    /// Uses the existing IsSportsChannel detection
+    /// </summary>
+    public async Task<int> HideNonSportsChannelsAsync()
+    {
+        var nonSportsChannels = await _db.IptvChannels
+            .Where(c => !c.IsSportsChannel && !c.IsHidden)
+            .ToListAsync();
+
+        foreach (var channel in nonSportsChannels)
+        {
+            channel.IsHidden = true;
+        }
+
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("[IPTV] Hid {Count} non-sports channels", nonSportsChannels.Count);
+
+        return nonSportsChannels.Count;
+    }
+
+    /// <summary>
+    /// Unhide all channels
+    /// </summary>
+    public async Task<int> UnhideAllChannelsAsync()
+    {
+        var hiddenChannels = await _db.IptvChannels
+            .Where(c => c.IsHidden)
+            .ToListAsync();
+
+        foreach (var channel in hiddenChannels)
+        {
+            channel.IsHidden = false;
+        }
+
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("[IPTV] Unhid {Count} channels", hiddenChannels.Count);
+
+        return hiddenChannels.Count;
+    }
+
+    /// <summary>
     /// Get all leagues with their channel mappings
     /// </summary>
     public async Task<List<(int LeagueId, string LeagueName, int ChannelCount)>> GetLeaguesWithChannelCountsAsync()

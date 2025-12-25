@@ -379,6 +379,17 @@ public class IptvChannel
     public bool IsEnabled { get; set; } = true;
 
     /// <summary>
+    /// Whether this channel is marked as a favorite for quick access
+    /// </summary>
+    public bool IsFavorite { get; set; } = false;
+
+    /// <summary>
+    /// Whether this channel is hidden from the channel list
+    /// Hidden channels are not shown in UI but still exist in database
+    /// </summary>
+    public bool IsHidden { get; set; } = false;
+
+    /// <summary>
     /// Country/region code (e.g., "US", "UK")
     /// </summary>
     public string? Country { get; set; }
@@ -807,6 +818,8 @@ public class IptvChannelResponse
     public int QualityScore { get; set; }
     public string? DetectedNetwork { get; set; }
     public List<int> MappedLeagueIds { get; set; } = new();
+    public bool IsFavorite { get; set; }
+    public bool IsHidden { get; set; }
 
     public static IptvChannelResponse FromEntity(IptvChannel channel)
     {
@@ -829,7 +842,9 @@ public class IptvChannelResponse
             DetectedQuality = channel.DetectedQuality,
             QualityScore = channel.QualityScore,
             DetectedNetwork = channel.DetectedNetwork,
-            MappedLeagueIds = channel.LeagueMappings?.Select(m => m.LeagueId).ToList() ?? new()
+            MappedLeagueIds = channel.LeagueMappings?.Select(m => m.LeagueId).ToList() ?? new(),
+            IsFavorite = channel.IsFavorite,
+            IsHidden = channel.IsHidden
         };
     }
 }
