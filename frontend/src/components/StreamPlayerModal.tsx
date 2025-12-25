@@ -133,8 +133,9 @@ export default function StreamPlayerModal({
     setShowDebug(false);
     setDebugInfo(null);
     setLoadingDebug(false);
+    // Don't clear globalLogs here - let the player initialization logs accumulate
+    // Only clear the displayed logs state
     setLogs([]);
-    globalLogs = []; // Clear global logs for fresh channel
   }, [channelId]);
 
   // Fetch debug info from backend
@@ -357,7 +358,7 @@ export default function StreamPlayerModal({
           }
         } else if (detectedType === 'mpegts') {
           if (mpegts.isSupported()) {
-            log('debug', 'Creating MPEG-TS player');
+            log('info', 'Creating MPEG-TS player', { url: effectiveUrl, originalUrl: streamUrl });
             const player = mpegts.createPlayer({
               type: streamUrl.toLowerCase().includes('.flv') ? 'flv' : 'mpegts',
               url: effectiveUrl,
@@ -365,9 +366,11 @@ export default function StreamPlayerModal({
               cors: true,
             }, {
               enableWorker: true,
-              enableStashBuffer: false,
-              stashInitialSize: 128,
+              enableStashBuffer: true,
+              stashInitialSize: 384 * 1024, // 384KB initial buffer for live streams
               liveBufferLatencyChasing: true,
+              liveBufferLatencyMaxLatency: 1.5,
+              liveBufferLatencyMinRemain: 0.3,
             });
 
             player.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
@@ -378,19 +381,40 @@ export default function StreamPlayerModal({
 
             player.on(mpegts.Events.LOADING_COMPLETE, () => {
               log('debug', 'MPEG-TS: Loading complete');
-              setIsLoading(false);
             });
 
             player.on(mpegts.Events.MEDIA_INFO, (info) => {
               log('info', 'MPEG-TS: Media info received', info);
+              setIsLoading(false);
+            });
+
+            player.on(mpegts.Events.STATISTICS_INFO, (stats) => {
+              if (stats.speed !== undefined && stats.speed > 0) {
+                log('debug', 'MPEG-TS: Receiving data', { speed: stats.speed, decodedFrames: stats.decodedFrames });
+              }
+            });
+
+            player.on(mpegts.Events.METADATA_ARRIVED, (metadata) => {
+              log('info', 'MPEG-TS: Metadata arrived', metadata);
             });
 
             player.attachMediaElement(video);
             player.load();
-            player.play();
+            try {
+              player.play();
+            } catch (e) {
+              log('warn', 'MPEG-TS autoplay blocked', e);
+            }
             mpegtsPlayerRef.current = player;
-            setIsLoading(false);
+
+            // Set loading to false after a short delay if no media info arrives
+            setTimeout(() => {
+              if (mpegtsPlayerRef.current) {
+                setIsLoading(false);
+              }
+            }, 5000);
           } else {
+            log('error', 'MPEG-TS not supported in this browser');
             setError('MPEG-TS/FLV is not supported in this browser');
             setErrorDetails('Your browser does not support MPEG-TS playback. Try Chrome or Edge.');
             setIsLoading(false);
