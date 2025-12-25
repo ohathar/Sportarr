@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  CalendarDaysIcon,
   ClockIcon,
   PlayCircleIcon,
   CheckCircleIcon,
@@ -11,7 +10,8 @@ import {
   ChevronRightIcon,
   SignalIcon,
   FilmIcon,
-  TrophyIcon,
+  FunnelIcon,
+  CalendarDaysIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import apiClient from '../../api/client';
@@ -52,17 +52,30 @@ interface SportEvent {
   recordingId?: number;
 }
 
+// Status color mappings for recording status
+const STATUS_COLORS = {
+  Scheduled: { bg: 'bg-blue-900/30', border: 'border-blue-700', text: 'text-blue-400', badge: 'bg-blue-600' },
+  Recording: { bg: 'bg-red-900/30', border: 'border-red-700', text: 'text-red-400', badge: 'bg-red-600' },
+  Completed: { bg: 'bg-green-900/30', border: 'border-green-700', text: 'text-green-400', badge: 'bg-green-600' },
+  Failed: { bg: 'bg-red-900/30', border: 'border-red-700', text: 'text-red-400', badge: 'bg-red-600' },
+  Cancelled: { bg: 'bg-gray-900/30', border: 'border-gray-700', text: 'text-gray-400', badge: 'bg-gray-600' },
+  Importing: { bg: 'bg-purple-900/30', border: 'border-purple-700', text: 'text-purple-400', badge: 'bg-purple-600' },
+  Imported: { bg: 'bg-green-900/30', border: 'border-green-700', text: 'text-green-400', badge: 'bg-green-600' },
+  default: { bg: 'bg-gray-900/30', border: 'border-gray-700', text: 'text-gray-400', badge: 'bg-gray-600' }
+};
+
+const getStatusColors = (status: RecordingStatus) => {
+  return STATUS_COLORS[status] || STATUS_COLORS.default;
+};
+
 export default function DvrSchedulePage() {
   const [recordings, setRecordings] = useState<DvrRecording[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<SportEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
-  const [currentWeekStart, setCurrentWeekStart] = useState(() => {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-    return new Date(today.setDate(diff));
-  });
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
+  const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -94,10 +107,55 @@ export default function DvrSchedulePage() {
     }
   };
 
+  // Get the start of the current week (Sunday)
+  const getWeekStart = (offset: number = 0) => {
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0 = Sunday, 6 = Saturday
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - dayOfWeek + (offset * 7));
+    weekStart.setHours(0, 0, 0, 0);
+    return weekStart;
+  };
+
+  // Get array of 7 days for the week (Sunday to Saturday)
+  const getWeekDays = (offset: number = 0) => {
+    const weekStart = getWeekStart(offset);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const day = new Date(weekStart);
+      day.setDate(weekStart.getDate() + i);
+      days.push(day);
+    }
+    return days;
+  };
+
+  const weekDays = getWeekDays(currentWeekOffset);
+  const weekStart = weekDays[0];
+  const weekEnd = weekDays[6];
+
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const formatWeekRange = () => {
+    const startMonth = monthNames[weekStart.getMonth()];
+    const endMonth = monthNames[weekEnd.getMonth()];
+    const startDay = weekStart.getDate();
+    const endDay = weekEnd.getDate();
+    const year = weekEnd.getFullYear();
+
+    if (startMonth === endMonth) {
+      return `${startMonth} ${startDay} - ${endDay}, ${year}`;
+    }
+    return `${startMonth} ${startDay} - ${endMonth} ${endDay}, ${year}`;
+  };
+
   // Group recordings by date
   const recordingsByDate = useMemo(() => {
     const grouped: Record<string, DvrRecording[]> = {};
     recordings.forEach(recording => {
+      // Apply status filter
+      if (filterStatus !== 'all' && recording.status !== filterStatus) return;
+
       const date = new Date(recording.scheduledStart).toISOString().split('T')[0];
       if (!grouped[date]) {
         grouped[date] = [];
@@ -109,26 +167,7 @@ export default function DvrSchedulePage() {
       arr.sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime());
     });
     return grouped;
-  }, [recordings]);
-
-  // Get week days for calendar view
-  const weekDays = useMemo(() => {
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date(currentWeekStart);
-      date.setDate(date.getDate() + i);
-      days.push(date);
-    }
-    return days;
-  }, [currentWeekStart]);
-
-  const navigateWeek = (direction: 'prev' | 'next') => {
-    setCurrentWeekStart(prev => {
-      const newDate = new Date(prev);
-      newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7));
-      return newDate;
-    });
-  };
+  }, [recordings, filterStatus]);
 
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -138,41 +177,24 @@ export default function DvrSchedulePage() {
     return new Date(dateString).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
   };
 
-  const formatDateFull = (date: Date) => {
-    return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-  };
-
-  const getStatusColor = (status: RecordingStatus) => {
-    switch (status) {
-      case 'Scheduled':
-        return 'text-blue-400 bg-blue-900/30';
-      case 'Recording':
-        return 'text-red-400 bg-red-900/30 animate-pulse';
-      case 'Completed':
-        return 'text-green-400 bg-green-900/30';
-      case 'Failed':
-        return 'text-red-400 bg-red-900/30';
-      case 'Cancelled':
-        return 'text-gray-400 bg-gray-900/30';
-      default:
-        return 'text-gray-400 bg-gray-900/30';
-    }
-  };
-
   const getStatusIcon = (status: RecordingStatus) => {
     switch (status) {
       case 'Scheduled':
-        return <ClockIcon className="w-4 h-4" />;
+        return <ClockIcon className="w-3 h-3" />;
       case 'Recording':
-        return <PlayCircleIcon className="w-4 h-4" />;
+        return <PlayCircleIcon className="w-3 h-3" />;
       case 'Completed':
-        return <CheckCircleIcon className="w-4 h-4" />;
+        return <CheckCircleIcon className="w-3 h-3" />;
       case 'Failed':
-        return <XCircleIcon className="w-4 h-4" />;
+        return <XCircleIcon className="w-3 h-3" />;
       case 'Cancelled':
-        return <XCircleIcon className="w-4 h-4" />;
+        return <XCircleIcon className="w-3 h-3" />;
+      case 'Importing':
+        return <ArrowPathIcon className="w-3 h-3 animate-spin" />;
+      case 'Imported':
+        return <CheckCircleIcon className="w-3 h-3" />;
       default:
-        return <ClockIcon className="w-4 h-4" />;
+        return <ClockIcon className="w-3 h-3" />;
     }
   };
 
@@ -184,7 +206,9 @@ export default function DvrSchedulePage() {
 
   const isToday = (date: Date) => {
     const today = new Date();
-    return date.toDateString() === today.toDateString();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
   };
 
   // Get recordings for a specific date (for calendar view)
@@ -193,259 +217,341 @@ export default function DvrSchedulePage() {
     return recordingsByDate[dateStr] || [];
   };
 
+  // Get unique statuses for filter
+  const uniqueStatuses = Array.from(new Set(recordings.map(r => r.status))) as RecordingStatus[];
+
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <CalendarDaysIcon className="w-8 h-8 text-red-500" />
-            DVR Schedule
-          </h1>
-          <p className="text-gray-400 mt-1">
-            Upcoming scheduled recordings and events
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* View Toggle */}
-          <div className="flex bg-gray-800 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('list')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === 'list' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              List
-            </button>
-            <button
-              onClick={() => setViewMode('calendar')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === 'calendar' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              Calendar
-            </button>
-          </div>
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="p-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50"
-            title="Refresh"
-          >
-            <ArrowPathIcon className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </div>
-
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-900/30 rounded-lg">
-              <ClockIcon className="w-5 h-5 text-blue-400" />
-            </div>
+    <div className="p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-4 md:mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
             <div>
-              <div className="text-2xl font-bold text-white">
-                {recordings.filter(r => r.status === 'Scheduled').length}
-              </div>
-              <div className="text-sm text-gray-400">Scheduled</div>
+              <h1 className="text-2xl md:text-3xl font-bold text-white mb-1 md:mb-2">DVR Schedule</h1>
+              <p className="text-sm md:text-base text-gray-400">
+                View and manage your scheduled recordings
+              </p>
             </div>
-          </div>
-        </div>
-        <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-red-900/30 rounded-lg">
-              <PlayCircleIcon className="w-5 h-5 text-red-400" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-white">
-                {recordings.filter(r => r.status === 'Recording').length}
-              </div>
-              <div className="text-sm text-gray-400">Recording Now</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-900/30 rounded-lg">
-              <TrophyIcon className="w-5 h-5 text-purple-400" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-white">
-                {upcomingEvents.length}
-              </div>
-              <div className="text-sm text-gray-400">Upcoming Events</div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-900/30 rounded-lg">
-              <SignalIcon className="w-5 h-5 text-green-400" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-white">
-                {new Set(recordings.map(r => r.channelId)).size}
-              </div>
-              <div className="text-sm text-gray-400">Active Channels</div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <div className="w-8 h-8 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-        </div>
-      )}
+            {/* Week Navigation */}
+            <div className="flex items-center justify-center gap-2 md:gap-4">
+              <button
+                onClick={() => setCurrentWeekOffset(currentWeekOffset - 1)}
+                className="p-2 hover:bg-red-900/20 rounded-lg transition-colors"
+                title="Previous week"
+              >
+                <ChevronLeftIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
+              </button>
 
-      {/* No Recordings */}
-      {!loading && recordings.length === 0 && (
-        <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg p-12 text-center">
-          <CalendarDaysIcon className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-white mb-2">No Scheduled Recordings</h3>
-          <p className="text-gray-400 max-w-md mx-auto">
-            There are no upcoming recordings scheduled. Recordings are automatically created when events
-            have channel mappings, or you can create manual recordings from the Recordings page.
-          </p>
-        </div>
-      )}
+              <div className="text-center min-w-[140px] md:min-w-[200px]">
+                <p className="text-sm md:text-lg font-semibold text-white">{formatWeekRange()}</p>
+                {currentWeekOffset === 0 && (
+                  <p className="text-xs md:text-sm text-red-400">Current Week</p>
+                )}
+              </div>
 
-      {/* List View */}
-      {!loading && viewMode === 'list' && recordings.length > 0 && (
-        <div className="space-y-6">
-          {Object.entries(recordingsByDate)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, dateRecordings]) => (
-              <div key={date} className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg overflow-hidden">
-                <div className="px-4 py-3 bg-black/30 border-b border-gray-800 flex items-center gap-2">
-                  <CalendarDaysIcon className="w-5 h-5 text-red-400" />
-                  <span className="font-semibold text-white">
-                    {formatDate(date)}
-                    {isToday(new Date(date)) && (
-                      <span className="ml-2 px-2 py-0.5 text-xs bg-red-600 text-white rounded">Today</span>
-                    )}
+              <button
+                onClick={() => setCurrentWeekOffset(currentWeekOffset + 1)}
+                className="p-2 hover:bg-red-900/20 rounded-lg transition-colors"
+                title="Next week"
+              >
+                <ChevronRightIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
+              </button>
+            </div>
+          </div>
+
+          {/* Filters & View Toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-2 md:gap-4">
+            <div className="flex flex-wrap items-center gap-2 md:gap-4">
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className="flex items-center gap-2 px-3 md:px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm md:text-base"
+              >
+                <FunnelIcon className="w-4 md:w-5 h-4 md:h-5" />
+                Filters
+                {filterStatus !== 'all' && (
+                  <span className="px-1.5 md:px-2 py-0.5 bg-red-600 text-white text-xs rounded-full">
+                    1
                   </span>
-                  <span className="text-gray-500 text-sm">({dateRecordings.length} recording{dateRecordings.length !== 1 ? 's' : ''})</span>
-                </div>
-                <div className="divide-y divide-gray-800">
-                  {dateRecordings.map(recording => (
-                    <div key={recording.id} className="p-4 hover:bg-gray-800/30 transition-colors">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 mb-1">
-                            <span className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${getStatusColor(recording.status)}`}>
-                              {getStatusIcon(recording.status)}
-                              {recording.status}
-                            </span>
-                            {recording.leagueName && (
-                              <span className="text-xs text-purple-400 bg-purple-900/30 px-2 py-1 rounded">
-                                {recording.leagueName}
-                              </span>
-                            )}
-                          </div>
-                          <h4 className="font-medium text-white truncate">{recording.eventTitle}</h4>
-                          <div className="flex items-center gap-4 mt-2 text-sm text-gray-400">
-                            <span className="flex items-center gap-1">
-                              <SignalIcon className="w-4 h-4" />
-                              {recording.channelName}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <ClockIcon className="w-4 h-4" />
-                              {formatTime(recording.scheduledStart)} - {formatTime(recording.scheduledEnd)}
-                            </span>
-                            <span className="text-gray-500">
-                              ({getDurationMinutes(recording.scheduledStart, recording.scheduledEnd)} min)
-                            </span>
-                          </div>
-                          {recording.qualityProfileName && (
-                            <div className="mt-1 text-xs text-gray-500 flex items-center gap-1">
-                              <FilmIcon className="w-3 h-3" />
-                              {recording.qualityProfileName}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-        </div>
-      )}
+                )}
+              </button>
 
-      {/* Calendar View */}
-      {!loading && viewMode === 'calendar' && (
-        <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg overflow-hidden">
-          {/* Calendar Header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-black/30 border-b border-gray-800">
-            <button
-              onClick={() => navigateWeek('prev')}
-              className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-            >
-              <ChevronLeftIcon className="w-5 h-5 text-gray-400" />
-            </button>
-            <span className="font-semibold text-white">
-              {formatDateFull(weekDays[0])} - {formatDateFull(weekDays[6])}
-            </span>
-            <button
-              onClick={() => navigateWeek('next')}
-              className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-            >
-              <ChevronRightIcon className="w-5 h-5 text-gray-400" />
-            </button>
-          </div>
+              {showFilters && (
+                <div className="flex flex-wrap items-center gap-2 md:gap-4 animate-fade-in w-full md:w-auto">
+                  {/* Status Filter */}
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="px-2 md:px-3 py-2 bg-gray-800 border border-gray-700 text-white rounded-lg focus:outline-none focus:border-red-600 text-sm md:text-base"
+                  >
+                    <option value="all">All Statuses</option>
+                    {uniqueStatuses.map(status => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
 
-          {/* Calendar Grid */}
-          <div className="grid grid-cols-7 divide-x divide-gray-800">
-            {weekDays.map(day => (
-              <div key={day.toISOString()} className="min-h-[200px]">
-                <div className={`px-2 py-2 text-center border-b border-gray-800 ${
-                  isToday(day) ? 'bg-red-900/30' : 'bg-black/30'
-                }`}>
-                  <div className="text-xs text-gray-500 uppercase">
-                    {day.toLocaleDateString([], { weekday: 'short' })}
-                  </div>
-                  <div className={`text-lg font-semibold ${isToday(day) ? 'text-red-400' : 'text-white'}`}>
-                    {day.getDate()}
-                  </div>
-                </div>
-                <div className="p-1 space-y-1">
-                  {getRecordingsForDate(day).map(recording => (
-                    <div
-                      key={recording.id}
-                      className={`p-1.5 rounded text-xs ${getStatusColor(recording.status)} cursor-pointer hover:opacity-80 transition-opacity`}
-                      title={`${recording.eventTitle}\n${formatTime(recording.scheduledStart)} - ${formatTime(recording.scheduledEnd)}\n${recording.channelName}`}
+                  {filterStatus !== 'all' && (
+                    <button
+                      onClick={() => setFilterStatus('all')}
+                      className="text-red-400 hover:text-red-300 text-xs md:text-sm"
                     >
-                      <div className="font-medium truncate">{formatTime(recording.scheduledStart)}</div>
-                      <div className="truncate text-gray-300">{recording.eventTitle}</div>
-                    </div>
-                  ))}
-                  {getRecordingsForDate(day).length === 0 && (
-                    <div className="text-center text-gray-600 text-xs py-4">
-                      No recordings
-                    </div>
+                      Clear
+                    </button>
                   )}
                 </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              {/* View Toggle */}
+              <div className="flex bg-gray-800 rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode('calendar')}
+                  className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition-colors ${
+                    viewMode === 'calendar' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Calendar
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition-colors ${
+                    viewMode === 'list' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  List
+                </button>
               </div>
-            ))}
+              <button
+                onClick={loadData}
+                disabled={loading}
+                className="p-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                title="Refresh"
+              >
+                <ArrowPathIcon className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Info Note */}
-      <div className="mt-8 p-4 bg-blue-900/20 border border-blue-900/30 rounded-lg">
-        <div className="flex items-start gap-3">
-          <ExclamationTriangleIcon className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-          <div className="text-sm text-gray-300">
-            <p className="font-medium text-white mb-1">How DVR Scheduling Works</p>
-            <ul className="list-disc list-inside space-y-1 text-gray-400">
-              <li>Recordings are automatically scheduled when events from tracked leagues have channel mappings</li>
-              <li>Map channels to leagues in the <span className="text-blue-400">Channels</span> page to enable automatic recording</li>
-              <li>Manual recordings can be created from the <span className="text-blue-400">Recordings</span> page</li>
-              <li>Pre/post padding is applied based on DVR settings</li>
-            </ul>
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600"></div>
+          </div>
+        )}
+
+        {/* Calendar View - Stacked on mobile, 7 columns on desktop */}
+        {!loading && viewMode === 'calendar' && (
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-2 md:gap-2">
+            {weekDays.map((day, index) => {
+              const dayRecordings = getRecordingsForDate(day);
+              const today = isToday(day);
+
+              return (
+                <div
+                  key={day.toISOString()}
+                  className={`bg-gradient-to-br from-gray-900 to-black border rounded-lg overflow-hidden min-h-[100px] md:min-h-[200px] ${
+                    today ? 'border-red-600 shadow-lg shadow-red-900/30' : 'border-red-900/30'
+                  }`}
+                >
+                  {/* Day Header */}
+                  <div className={`px-2 md:px-3 py-1.5 md:py-2 border-b ${today ? 'bg-red-950/40 border-red-900/40' : 'bg-gray-800/30 border-red-900/20'}`}>
+                    <div className="flex md:block items-center gap-2">
+                      <div className="text-xs text-gray-400 font-medium">
+                        {dayNames[index]}
+                      </div>
+                      <div className={`text-base md:text-lg font-bold ${today ? 'text-red-400' : 'text-white'}`}>
+                        {day.getDate()}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recordings for the day */}
+                  <div className="p-1.5 md:p-2 space-y-1.5 md:space-y-2">
+                    {dayRecordings.length > 0 ? (
+                      dayRecordings.map(recording => {
+                        const statusColors = getStatusColors(recording.status);
+
+                        return (
+                          <div
+                            key={recording.id}
+                            className={`${statusColors.bg} hover:opacity-80 border ${statusColors.border} rounded p-2 transition-all cursor-pointer group`}
+                            title={`${recording.eventTitle}\n${formatTime(recording.scheduledStart)} - ${formatTime(recording.scheduledEnd)}\n${recording.channelName}`}
+                          >
+                            <div className="flex items-start gap-2">
+                              {/* Recording Details */}
+                              <div className="flex-1 min-w-0">
+                                {/* Status Badge */}
+                                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 ${statusColors.badge} text-white text-xs rounded mb-1`}>
+                                  {getStatusIcon(recording.status)}
+                                  {recording.status}
+                                </span>
+
+                                <p className="text-xs font-semibold text-white line-clamp-2 group-hover:text-gray-200 transition-colors">
+                                  {recording.eventTitle}
+                                </p>
+
+                                {/* Time */}
+                                <div className="flex items-center gap-1 mt-1">
+                                  <ClockIcon className="w-3 h-3 text-gray-400" />
+                                  <span className="text-xs text-gray-400">
+                                    {formatTime(recording.scheduledStart)}
+                                  </span>
+                                </div>
+
+                                {/* Channel */}
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <SignalIcon className="w-3 h-3 text-gray-500" />
+                                  <span className="text-xs text-gray-500 line-clamp-1">
+                                    {recording.channelName}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center py-4 text-gray-600 text-xs">
+                        No recordings
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* List View */}
+        {!loading && viewMode === 'list' && (
+          <div className="space-y-4">
+            {Object.entries(recordingsByDate).length === 0 ? (
+              <div className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg p-12 text-center">
+                <CalendarDaysIcon className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+                <h3 className="text-xl font-semibold text-white mb-2">No Scheduled Recordings</h3>
+                <p className="text-gray-400 max-w-md mx-auto">
+                  There are no upcoming recordings scheduled. Recordings are automatically created when events
+                  have channel mappings, or you can create manual recordings from the Recordings page.
+                </p>
+              </div>
+            ) : (
+              Object.entries(recordingsByDate)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([date, dateRecordings]) => (
+                  <div key={date} className="bg-gradient-to-br from-gray-900 to-black border border-red-900/30 rounded-lg overflow-hidden">
+                    <div className={`px-4 py-3 border-b flex items-center gap-2 ${
+                      isToday(new Date(date)) ? 'bg-red-950/40 border-red-900/40' : 'bg-gray-800/30 border-red-900/20'
+                    }`}>
+                      <CalendarDaysIcon className="w-5 h-5 text-red-400" />
+                      <span className={`font-semibold ${isToday(new Date(date)) ? 'text-red-400' : 'text-white'}`}>
+                        {formatDate(date)}
+                      </span>
+                      {isToday(new Date(date)) && (
+                        <span className="px-2 py-0.5 text-xs bg-red-600 text-white rounded">Today</span>
+                      )}
+                      <span className="text-gray-500 text-sm">({dateRecordings.length} recording{dateRecordings.length !== 1 ? 's' : ''})</span>
+                    </div>
+                    <div className="divide-y divide-gray-800/50">
+                      {dateRecordings.map(recording => {
+                        const statusColors = getStatusColors(recording.status);
+                        return (
+                          <div key={recording.id} className="p-4 hover:bg-gray-800/30 transition-colors">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-3 mb-1">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${statusColors.badge} text-white`}>
+                                    {getStatusIcon(recording.status)}
+                                    {recording.status}
+                                  </span>
+                                  {recording.leagueName && (
+                                    <span className="text-xs text-purple-400 bg-purple-900/30 px-2 py-1 rounded">
+                                      {recording.leagueName}
+                                    </span>
+                                  )}
+                                </div>
+                                <h4 className="font-medium text-white truncate">{recording.eventTitle}</h4>
+                                <div className="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-400">
+                                  <span className="flex items-center gap-1">
+                                    <SignalIcon className="w-4 h-4" />
+                                    {recording.channelName}
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <ClockIcon className="w-4 h-4" />
+                                    {formatTime(recording.scheduledStart)} - {formatTime(recording.scheduledEnd)}
+                                  </span>
+                                  <span className="text-gray-500">
+                                    ({getDurationMinutes(recording.scheduledStart, recording.scheduledEnd)} min)
+                                  </span>
+                                </div>
+                                {recording.qualityProfileName && (
+                                  <div className="mt-1 text-xs text-gray-500 flex items-center gap-1">
+                                    <FilmIcon className="w-3 h-3" />
+                                    {recording.qualityProfileName}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))
+            )}
+          </div>
+        )}
+
+        {/* Legend */}
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-gray-400 mb-3">Legend</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <div className="w-3 h-3 bg-red-600 rounded"></div>
+              <span>Today</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <div className="w-3 h-3 bg-blue-600 rounded"></div>
+              <span>Scheduled</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <div className="w-3 h-3 bg-red-600 rounded animate-pulse"></div>
+              <span>Recording</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <div className="w-3 h-3 bg-green-600 rounded"></div>
+              <span>Completed</span>
+            </div>
+          </div>
+
+          {/* Status Colors */}
+          <div className="mt-4">
+            <h4 className="text-xs font-semibold text-gray-500 mb-2">Status Colors</h4>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(STATUS_COLORS).filter(([key]) => key !== 'default').map(([status, colors]) => (
+                <div key={status} className="flex items-center gap-2">
+                  <div className={`w-3 h-3 ${colors.badge} rounded`}></div>
+                  <span className="text-xs text-gray-500">{status}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Info Note */}
+        <div className="mt-6 p-4 bg-blue-900/20 border border-blue-900/30 rounded-lg">
+          <div className="flex items-start gap-3">
+            <ExclamationTriangleIcon className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-gray-300">
+              <p className="font-medium text-white mb-1">How DVR Scheduling Works</p>
+              <ul className="list-disc list-inside space-y-1 text-gray-400">
+                <li>Recordings are automatically scheduled when events from tracked leagues have channel mappings</li>
+                <li>Map channels to leagues in the <span className="text-blue-400">Channels</span> page to enable automatic recording</li>
+                <li>Manual recordings can be created from the <span className="text-blue-400">Recordings</span> page</li>
+                <li>Pre/post padding is applied based on DVR settings</li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>

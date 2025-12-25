@@ -128,6 +128,15 @@ export default function StreamPlayerModal({
   const [loadingDebug, setLoadingDebug] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
 
+  // Reset debug state when channel changes
+  useEffect(() => {
+    setShowDebug(false);
+    setDebugInfo(null);
+    setLoadingDebug(false);
+    setLogs([]);
+    globalLogs = []; // Clear global logs for fresh channel
+  }, [channelId]);
+
   // Fetch debug info from backend
   const fetchDebugInfo = async () => {
     if (!channelId) {

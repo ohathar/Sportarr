@@ -6501,11 +6501,10 @@ app.MapGet("/api/iptv/stream/{channelId:int}/debug", async (
             ["error"] = headError
         };
 
-        // Test GET request with range (first 1KB)
+        // Test GET request - for live streams we can't use Range, so read with timeout
         var getRequest = new HttpRequestMessage(HttpMethod.Get, channel.StreamUrl);
         getRequest.Headers.Add("User-Agent", userAgent);
         getRequest.Headers.Add("Accept", "*/*");
-        getRequest.Headers.Add("Range", "bytes=0-1023");
 
         HttpResponseMessage? getResponse = null;
         string? getError = null;
@@ -6514,12 +6513,48 @@ app.MapGet("/api/iptv/stream/{channelId:int}/debug", async (
         stopwatch.Restart();
         try
         {
-            getResponse = await httpClient.SendAsync(getRequest);
+            // Use ResponseHeadersRead to get response quickly without waiting for full content
+            getResponse = await httpClient.SendAsync(getRequest, HttpCompletionOption.ResponseHeadersRead);
+            stopwatch.Stop();
+            var headerTime = stopwatch.ElapsedMilliseconds;
+
             if (getResponse.IsSuccessStatusCode)
             {
-                sampleBytes = await getResponse.Content.ReadAsByteArrayAsync();
+                // For live streams, just read a small sample with a short timeout
+                stopwatch.Restart();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    var stream = await getResponse.Content.ReadAsStreamAsync();
+                    sampleBytes = new byte[2048]; // Read up to 2KB
+                    var bytesRead = 0;
+                    var totalRead = 0;
+
+                    // Read in small chunks until we have enough or timeout
+                    while (totalRead < sampleBytes.Length)
+                    {
+                        bytesRead = await stream.ReadAsync(sampleBytes.AsMemory(totalRead, Math.Min(256, sampleBytes.Length - totalRead)), cts.Token);
+                        if (bytesRead == 0) break; // Stream ended
+                        totalRead += bytesRead;
+                        if (totalRead >= 256) break; // Got enough for format detection
+                    }
+
+                    // Trim to actual size
+                    if (totalRead < sampleBytes.Length)
+                    {
+                        Array.Resize(ref sampleBytes, totalRead);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // This is expected for live streams - we just need enough bytes for detection
+                    if (sampleBytes?.Length == 0)
+                    {
+                        getError = "Timeout reading stream data (stream may require different player)";
+                    }
+                }
+                stopwatch.Stop();
             }
-            stopwatch.Stop();
         }
         catch (Exception ex)
         {
