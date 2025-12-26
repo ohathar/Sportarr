@@ -362,11 +362,15 @@ export default function StreamPlayerModal({
           if (Hls.isSupported()) {
             const hls = new Hls({
               enableWorker: true,
-              lowLatencyMode: true,
-              liveSyncDuration: 3,
-              liveMaxLatencyDuration: 10,
-              maxBufferLength: 30,
-              maxMaxBufferLength: 60,
+              lowLatencyMode: false,           // Disable for more stable playback
+              liveSyncDuration: 6,             // Target 6 seconds behind live edge
+              liveMaxLatencyDuration: 15,      // Allow up to 15 seconds latency
+              liveSyncDurationCount: 3,        // Sync to 3 segments behind live
+              maxBufferLength: 60,             // Buffer up to 60 seconds
+              maxMaxBufferLength: 120,         // Max buffer 2 minutes
+              maxBufferSize: 60 * 1000 * 1000, // 60MB buffer size
+              maxBufferHole: 1.0,              // Allow 1 second gaps in buffer
+              highBufferWatchdogPeriod: 3,     // Check buffer every 3 seconds
             });
 
             hls.on(Hls.Events.MEDIA_ATTACHED, () => {
