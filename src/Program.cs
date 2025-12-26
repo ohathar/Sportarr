@@ -4531,6 +4531,62 @@ app.MapPost("/api/queue/{id:int}/import", async (int id, SportarrDbContext db, S
     }
 });
 
+// API: Queue Operations - Retry Import (for failed imports)
+app.MapPost("/api/queue/{id:int}/retry", async (int id, SportarrDbContext db, Sportarr.Api.Services.FileImportService fileImportService, ILogger<Program> logger) =>
+{
+    var item = await db.DownloadQueue
+        .Include(dq => dq.Event)
+        .Include(dq => dq.DownloadClient)
+        .FirstOrDefaultAsync(dq => dq.Id == id);
+
+    if (item is null) return Results.NotFound(new { error = "Queue item not found" });
+
+    // Only allow retry for failed items
+    if (item.Status != DownloadStatus.Failed)
+    {
+        return Results.BadRequest(new { error = $"Cannot retry import - item status is {item.Status}, not Failed" });
+    }
+
+    // Check if download is complete (has progress of 100%)
+    if (item.Progress < 100)
+    {
+        return Results.BadRequest(new { error = "Cannot retry import - download is not complete" });
+    }
+
+    logger.LogInformation("Retrying import for queue item {Id}: {Title}", item.Id, item.Title);
+
+    try
+    {
+        // Reset status to Importing
+        item.Status = DownloadStatus.Importing;
+        item.ErrorMessage = null;
+        item.RetryCount = (item.RetryCount ?? 0) + 1;
+        await db.SaveChangesAsync();
+
+        // Attempt import
+        await fileImportService.ImportDownloadAsync(item);
+
+        // Success - mark as imported
+        item.Status = DownloadStatus.Imported;
+        item.ImportedAt = DateTime.UtcNow;
+        item.ErrorMessage = null;
+        await db.SaveChangesAsync();
+
+        logger.LogInformation("Retry import succeeded for queue item {Id}: {Title}", item.Id, item.Title);
+        return Results.Ok(new { success = true, message = "Import successful" });
+    }
+    catch (Exception ex)
+    {
+        // Failed again - keep as failed with updated error
+        item.Status = DownloadStatus.Failed;
+        item.ErrorMessage = $"Import retry failed: {ex.Message}";
+        await db.SaveChangesAsync();
+
+        logger.LogWarning(ex, "Retry import failed for queue item {Id}: {Title}", item.Id, item.Title);
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 // API: Pending Imports (Manual Import for External Downloads)
 app.MapGet("/api/pending-imports", async (SportarrDbContext db) =>
 {

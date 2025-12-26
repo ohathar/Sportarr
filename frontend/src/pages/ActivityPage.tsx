@@ -506,6 +506,17 @@ export default function ActivityPage() {
     }
   };
 
+  // Retry import for failed items (download complete but import failed)
+  const handleRetryImport = async (item: QueueItem) => {
+    try {
+      await apiClient.post(`/queue/${item.id}/retry`);
+      loadQueue();
+    } catch (error: any) {
+      console.error('Failed to retry import:', error);
+      alert(error.response?.data?.error || 'Failed to retry import');
+    }
+  };
+
   // Delete download for unmonitored event (removes from client and queue)
   const handleDeleteUnmonitored = async (item: QueueItem) => {
     try {
@@ -795,9 +806,21 @@ export default function ActivityPage() {
         const isUnmonitored = item.statusMessages?.some(msg => msg.includes('no longer monitored'));
         // Show import button for Warning (5) or Completed (3) status when unmonitored
         const canImport = isUnmonitored && (item.status === 5 || item.status === 3);
+        // Show retry import button for Failed (4) items that have completed download (100% progress)
+        const canRetryImport = item.status === 4 && item.progress >= 100;
         return (
           <td key="actions" className="px-3 py-2">
             <div className="flex items-center justify-end gap-1">
+              {/* Show Retry Import button for failed imports (download complete but import failed) */}
+              {canRetryImport && (
+                <button
+                  onClick={() => handleRetryImport(item)}
+                  className="p-1.5 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-900/30 rounded transition-colors"
+                  title="Retry Import"
+                >
+                  <ArrowPathIcon className="w-4 h-4" />
+                </button>
+              )}
               {/* Show Import/Delete buttons for unmonitored downloads (Sonarr-style) */}
               {canImport && (
                 <>
@@ -817,16 +840,14 @@ export default function ActivityPage() {
                   </button>
                 </>
               )}
-              {/* Regular remove button for other downloads */}
-              {!canImport && (
-                <button
-                  onClick={() => handleOpenRemoveQueueDialog(item)}
-                  className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded transition-colors"
-                  title="Remove"
-                >
-                  <TrashIcon className="w-4 h-4" />
-                </button>
-              )}
+              {/* Regular remove button for all downloads */}
+              <button
+                onClick={() => handleOpenRemoveQueueDialog(item)}
+                className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded transition-colors"
+                title="Remove"
+              >
+                <TrashIcon className="w-4 h-4" />
+              </button>
             </div>
           </td>
         );
