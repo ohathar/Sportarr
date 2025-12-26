@@ -208,18 +208,27 @@ export default function StreamPlayerModal({
     }
   };
 
+  // Convert relative URL to absolute URL (needed for Web Workers like mpegts.js)
+  const toAbsoluteUrl = (url: string): string => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    // For relative URLs, prepend the current origin
+    return `${window.location.origin}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
   // Get the stream URL to use (proxy, direct, or ffmpeg HLS)
   const getStreamUrl = (): string | null => {
     if (!streamUrl) return null;
 
     if (playbackMode === 'ffmpeg' && ffmpegSessionId) {
-      // Use FFmpeg-generated HLS stream
-      return `/api/v1/stream/${ffmpegSessionId}/playlist.m3u8`;
+      // Use FFmpeg-generated HLS stream (convert to absolute URL for HLS.js)
+      return toAbsoluteUrl(`/api/v1/stream/${ffmpegSessionId}/playlist.m3u8`);
     }
 
     if (playbackMode === 'proxy' && channelId) {
-      // Use the backend proxy to avoid CORS issues
-      return `/api/iptv/stream/${channelId}`;
+      // Use the backend proxy to avoid CORS issues (convert to absolute URL for mpegts.js worker)
+      return toAbsoluteUrl(`/api/iptv/stream/${channelId}`);
     }
 
     return streamUrl;
