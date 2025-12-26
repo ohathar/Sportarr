@@ -24,11 +24,26 @@ import {
   AdjustmentsHorizontalIcon,
   InformationCircleIcon,
   ChartBarIcon,
+  CloudArrowDownIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import apiClient from '../../api/client';
+import { apiGet } from '../../utils/api';
 import type { QualityProfile } from '../../types';
 import SettingsHeader from '../../components/SettingsHeader';
+
+// Naming preset types (same as MediaManagementSettings)
+interface NamingPreset {
+  format: string;
+  description: string;
+  supportsMultiPart: boolean;
+}
+
+interface NamingPresets {
+  file: Record<string, NamingPreset>;
+  folder: Record<string, { format: string; description: string }>;
+}
 
 // DVR Recording Types
 type RecordingStatus = 'Scheduled' | 'Recording' | 'Completed' | 'Failed' | 'Cancelled' | 'Importing' | 'Imported';
@@ -220,6 +235,10 @@ export default function DvrRecordingsSettings() {
   // Source resolution for IPTV (what quality the source stream is)
   const [sourceResolution, setSourceResolution] = useState<string>('1080p');
 
+  // Naming presets state (TRaSH Guides naming conventions)
+  const [namingPresets, setNamingPresets] = useState<NamingPresets | null>(null);
+  const [selectedNamingPreset, setSelectedNamingPreset] = useState<string>('');
+
   // Load data on mount
   useEffect(() => {
     loadData();
@@ -228,6 +247,7 @@ export default function DvrRecordingsSettings() {
     loadQualityProfiles();
     loadHardwareAcceleration();
     loadUserQualityProfiles();
+    loadNamingPresets();
     // Refresh every 30 seconds to update recording statuses
     const interval = setInterval(loadRecordings, 30000);
     return () => clearInterval(interval);
@@ -328,6 +348,31 @@ export default function DvrRecordingsSettings() {
     } catch (err: any) {
       console.error('Failed to load hardware acceleration info:', err);
     }
+  };
+
+  // Load TRaSH Guides naming presets
+  const loadNamingPresets = async () => {
+    try {
+      // Note: enableMultiPartEpisodes is typically true for DVR (fighting sports have multiple parts)
+      const response = await apiGet('/api/trash/naming-presets?enableMultiPartEpisodes=true');
+      if (response.ok) {
+        const data = await response.json();
+        setNamingPresets(data);
+      }
+    } catch (error) {
+      console.error('Failed to load naming presets:', error);
+    }
+  };
+
+  // Handle applying a naming preset
+  const handleApplyNamingPreset = (presetKey: string) => {
+    if (!namingPresets?.file?.[presetKey]) return;
+    const preset = namingPresets.file[presetKey];
+    handleSettingsChange('fileNamingPattern', preset.format);
+    setSelectedNamingPreset(presetKey);
+    toast.success('Naming preset applied', {
+      description: preset.description,
+    });
   };
 
   // Calculate video bitrate from GB per hour
@@ -1309,28 +1354,118 @@ export default function DvrRecordingsSettings() {
                   <FolderIcon className="w-5 h-5 mr-2 text-yellow-400" />
                   Storage Settings
                 </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">Recording Path</label>
-                    <input
-                      type="text"
-                      value={dvrSettings.recordingPath}
-                      onChange={(e) => handleSettingsChange('recordingPath', e.target.value)}
-                      placeholder="Leave empty to use root folder"
-                      className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-red-600"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Where to save recordings (empty = root folder)</p>
+
+                {/* Recording Path */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Recording Path</label>
+                  <input
+                    type="text"
+                    value={dvrSettings.recordingPath}
+                    onChange={(e) => handleSettingsChange('recordingPath', e.target.value)}
+                    placeholder="Leave empty to use root folder"
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-red-600"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Where to save recordings (empty = root folder)</p>
+                </div>
+
+                {/* File Naming - Enhanced with TRaSH presets */}
+                <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="flex items-center gap-2 text-sm font-medium text-white">
+                      <DocumentTextIcon className="w-5 h-5 text-purple-400" />
+                      File Naming Pattern
+                    </label>
+                    {namingPresets?.file && Object.keys(namingPresets.file).length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <CloudArrowDownIcon className="w-4 h-4 text-purple-400" />
+                        <select
+                          value={selectedNamingPreset}
+                          onChange={(e) => handleApplyNamingPreset(e.target.value)}
+                          className="px-3 py-1 bg-gray-900 border border-purple-700 rounded text-sm text-purple-200 focus:outline-none focus:border-purple-500"
+                        >
+                          <option value="" className="bg-gray-900 text-gray-300">TRaSH Naming Presets...</option>
+                          {Object.entries(namingPresets.file).map(([key, preset]) => (
+                            <option key={key} value={key} className="bg-gray-900 text-white">
+                              {key.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                              {preset.supportsMultiPart ? ' (Multi-Part)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">File Naming Pattern</label>
-                    <input
-                      type="text"
-                      value={dvrSettings.fileNamingPattern}
-                      onChange={(e) => handleSettingsChange('fileNamingPattern', e.target.value)}
-                      placeholder="{Title} - {Date}"
-                      className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-red-600"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Available: {'{Title}'}, {'{Date}'}, {'{League}'}, {'{Channel}'}</p>
+
+                  <input
+                    type="text"
+                    value={dvrSettings.fileNamingPattern}
+                    onChange={(e) => {
+                      handleSettingsChange('fileNamingPattern', e.target.value);
+                      setSelectedNamingPreset(''); // Clear preset selection when manually editing
+                    }}
+                    placeholder="{Series} - {Season}{Episode}{Part} - {Event Title} - {Quality Full}"
+                    className="w-full px-4 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white font-mono text-sm focus:outline-none focus:border-red-600"
+                  />
+
+                  {/* Token Helper */}
+                  <div className="mt-3 p-3 bg-black/30 rounded-lg border border-gray-800">
+                    <p className="text-xs font-medium text-gray-400 mb-2">Available Tokens (click to insert):</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {[
+                        { token: '{Series}', desc: 'League name', category: 'Plex' },
+                        { token: '{Season}', desc: 's2024', category: 'Plex' },
+                        { token: '{Episode}', desc: 'e12', category: 'Plex' },
+                        { token: '{Part}', desc: 'pt1/pt2/pt3', category: 'Plex' },
+                        { token: '{Event Title}', desc: 'Event name', category: 'Event' },
+                        { token: '{Air Date}', desc: '2024-04-13', category: 'Event' },
+                        { token: '{Quality Full}', desc: 'HDTV-1080p', category: 'Quality' },
+                        { token: '{Release Group}', desc: 'DVR', category: 'Release' },
+                      ].map((item) => (
+                        <button
+                          key={item.token}
+                          type="button"
+                          onClick={() => {
+                            const currentFormat = dvrSettings.fileNamingPattern || '';
+                            handleSettingsChange('fileNamingPattern', currentFormat + item.token);
+                            setSelectedNamingPreset('');
+                          }}
+                          className="text-left px-2 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-purple-600 rounded text-xs transition-colors group"
+                        >
+                          <div className="font-mono text-purple-400 group-hover:text-purple-300">{item.token}</div>
+                          <div className="text-gray-500 text-[10px]">{item.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Live Preview */}
+                  <div className="mt-3 p-3 bg-gradient-to-r from-blue-950/30 to-purple-950/30 border border-blue-900/50 rounded-lg">
+                    <p className="text-xs font-medium text-blue-300 mb-1">Preview:</p>
+                    <p className="text-white font-mono text-sm break-all">
+                      {(dvrSettings.fileNamingPattern || '{Title} - {Date}')
+                        .replace(/{Series}/gi, 'UFC')
+                        .replace(/{Season}/gi, 's2024')
+                        .replace(/{Episode}/gi, 'e12')
+                        .replace(/{Part}/gi, ' - pt3')
+                        .replace(/{Event Title}/gi, 'UFC 315')
+                        .replace(/{Title}/gi, 'UFC 315')
+                        .replace(/{Air Date}/gi, '2024-12-26')
+                        .replace(/{Date}/gi, '2024-12-26')
+                        .replace(/{League}/gi, 'UFC')
+                        .replace(/{Channel}/gi, 'ESPN')
+                        .replace(/{Quality Full}/gi, 'HDTV-1080p')
+                        .replace(/{Quality}/gi, '1080p')
+                        .replace(/{Release Group}/gi, 'DVR')
+                      }.mkv
+                    </p>
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      Using TRaSH-compatible naming ensures Plex and other media players recognize your recordings correctly
+                    </p>
+                  </div>
+
+                  {/* Info about naming consistency */}
+                  <div className="mt-3 p-2 bg-blue-950/20 border border-blue-900/30 rounded text-xs text-gray-400">
+                    <InformationCircleIcon className="w-4 h-4 text-blue-400 inline mr-1" />
+                    Use the same naming format as your Media Management settings for consistent file organization across DVR recordings and imported files.
                   </div>
                 </div>
               </div>
