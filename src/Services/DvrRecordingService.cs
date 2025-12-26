@@ -15,19 +15,22 @@ public class DvrRecordingService
     private readonly FFmpegRecorderService _ffmpegRecorder;
     private readonly IptvSourceService _iptvService;
     private readonly ConfigService _configService;
+    private readonly FileNamingService _namingService;
 
     public DvrRecordingService(
         ILogger<DvrRecordingService> logger,
         SportarrDbContext db,
         FFmpegRecorderService ffmpegRecorder,
         IptvSourceService iptvService,
-        ConfigService configService)
+        ConfigService configService,
+        FileNamingService namingService)
     {
         _logger = logger;
         _db = db;
         _ffmpegRecorder = ffmpegRecorder;
         _iptvService = iptvService;
         _configService = configService;
+        _namingService = namingService;
     }
 
     // ============================================================================
@@ -141,7 +144,8 @@ public class DvrRecordingService
         }
 
         // Map channel's detected quality to HDTV quality name for scoring
-        var qualityName = MapChannelQualityToHdtvQuality(channel.DetectedQuality, channel.QualityScore);
+        // Pass channel name as fallback to detect quality from names like "Sky Sports 4K"
+        var qualityName = MapChannelQualityToHdtvQuality(channel.DetectedQuality, channel.QualityScore, channel.Name);
 
         var recording = new DvrRecording
         {
@@ -281,6 +285,8 @@ public class DvrRecordingService
         var recording = await _db.DvrRecordings
             .Include(r => r.Channel)
             .ThenInclude(c => c!.Source)
+            .Include(r => r.Event)
+            .ThenInclude(e => e!.League)
             .FirstOrDefaultAsync(r => r.Id == recordingId);
 
         if (recording == null)
@@ -486,45 +492,178 @@ public class DvrRecordingService
     // Helpers
     // ============================================================================
 
+    /// <summary>
+    /// Generate output path for DVR recording using the same folder structure as regular imports.
+    /// Uses MediaManagementSettings and FileNamingService for consistency with indexer downloads.
+    /// </summary>
     private async Task<string> GenerateOutputPathAsync(DvrRecording recording)
     {
         var config = await _configService.GetConfigAsync();
+        var settings = await GetMediaManagementSettingsAsync();
 
-        // Get root folder path (first configured root folder)
-        var rootFolder = await _db.RootFolders.FirstOrDefaultAsync();
+        // Get root folder (same logic as FileImportService)
+        var rootFolder = settings.RootFolders
+            .Where(rf => rf.Accessible)
+            .OrderByDescending(rf => rf.FreeSpace)
+            .FirstOrDefault();
+
         var basePath = rootFolder?.Path ?? Path.Combine(AppContext.BaseDirectory, "recordings");
 
-        // Build folder structure: {RootPath}/DVR/{LeagueName or 'Manual'}/{EventTitle or Recording Title}/
-        var leagueName = recording.Event?.League?.Name ?? "Manual";
-        var eventTitle = recording.Event?.Title ?? recording.Title;
-
-        // Sanitize folder/file names
-        leagueName = SanitizeFileName(leagueName);
-        eventTitle = SanitizeFileName(eventTitle);
-
-        var folderPath = Path.Combine(basePath, "DVR", leagueName, eventTitle);
-
-        // Ensure folder exists
-        if (!Directory.Exists(folderPath))
-        {
-            Directory.CreateDirectory(folderPath);
-        }
-
-        // Get container format directly from config
+        // Get container format
         var container = config.DvrContainer ?? "mp4";
-
-        // Normalize container extension (ensure no leading dot)
         container = container.TrimStart('.').ToLowerInvariant();
 
-        // Build filename with container format from profile
-        var timestamp = recording.ScheduledStart.ToString("yyyy-MM-dd_HHmm");
-        var partSuffix = !string.IsNullOrEmpty(recording.PartName)
-            ? $" - {SanitizeFileName(recording.PartName)}"
-            : "";
+        // Build destination path using same logic as FileImportService
+        var destinationPath = basePath;
 
-        var filename = $"{eventTitle}{partSuffix} [{timestamp}].{container}";
+        if (recording.Event != null)
+        {
+            // Linked to an event - use same folder structure as regular imports
+            var eventInfo = recording.Event;
 
-        return Path.Combine(folderPath, filename);
+            // Add event folder if configured (e.g., "UFC/Season 2025")
+            if (settings.CreateEventFolder)
+            {
+                var folderName = _namingService.BuildFolderName(settings.EventFolderFormat, eventInfo);
+                destinationPath = Path.Combine(destinationPath, folderName);
+            }
+
+            // Calculate episode number for proper naming
+            var episodeNumber = await CalculateEpisodeNumberAsync(eventInfo);
+
+            // Update event's episode number if needed
+            if (!eventInfo.EpisodeNumber.HasValue || eventInfo.EpisodeNumber.Value != episodeNumber)
+            {
+                eventInfo.EpisodeNumber = episodeNumber;
+            }
+
+            // Build filename using FileNamingService with same tokens as regular imports
+            if (settings.RenameFiles)
+            {
+                var partSuffix = !string.IsNullOrEmpty(recording.PartName)
+                    ? $" - {recording.PartName}"
+                    : "";
+
+                var tokens = new FileNamingTokens
+                {
+                    EventTitle = eventInfo.Title,
+                    EventTitleThe = eventInfo.Title,
+                    AirDate = eventInfo.EventDate,
+                    Quality = recording.Quality ?? "HDTV-1080p",
+                    QualityFull = $"{recording.Quality ?? "HDTV-1080p"}.DVR",
+                    ReleaseGroup = "DVR",
+                    OriginalTitle = recording.Title,
+                    OriginalFilename = recording.Title,
+                    Series = eventInfo.League?.Name ?? eventInfo.Sport,
+                    Season = eventInfo.SeasonNumber?.ToString("0000") ?? eventInfo.Season ?? DateTime.UtcNow.Year.ToString(),
+                    Episode = episodeNumber.ToString("00"),
+                    Part = partSuffix
+                };
+
+                var filename = _namingService.BuildFileName(settings.StandardFileFormat, tokens, $".{container}");
+                destinationPath = Path.Combine(destinationPath, filename);
+            }
+            else
+            {
+                // No renaming - use event title with timestamp
+                var timestamp = recording.ScheduledStart.ToString("yyyy-MM-dd_HHmm");
+                var partSuffix = !string.IsNullOrEmpty(recording.PartName)
+                    ? $" - {SanitizeFileName(recording.PartName)}"
+                    : "";
+                var filename = $"{SanitizeFileName(eventInfo.Title)}{partSuffix} [{timestamp}].{container}";
+                destinationPath = Path.Combine(destinationPath, filename);
+            }
+        }
+        else
+        {
+            // Manual recording (no linked event) - use DVR subfolder for organization
+            var folderPath = Path.Combine(basePath, "DVR", "Manual");
+            var timestamp = recording.ScheduledStart.ToString("yyyy-MM-dd_HHmm");
+            var partSuffix = !string.IsNullOrEmpty(recording.PartName)
+                ? $" - {SanitizeFileName(recording.PartName)}"
+                : "";
+            var filename = $"{SanitizeFileName(recording.Title)}{partSuffix} [{timestamp}].{container}";
+            destinationPath = Path.Combine(folderPath, filename);
+        }
+
+        // Ensure directory exists
+        var directory = Path.GetDirectoryName(destinationPath);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+            _logger.LogDebug("[DVR] Created directory: {Directory}", directory);
+        }
+
+        return destinationPath;
+    }
+
+    /// <summary>
+    /// Get media management settings (same as FileImportService)
+    /// </summary>
+    private async Task<MediaManagementSettings> GetMediaManagementSettingsAsync()
+    {
+        var settings = await _db.MediaManagementSettings.FirstOrDefaultAsync();
+
+        if (settings == null)
+        {
+            settings = new MediaManagementSettings
+            {
+                RootFolders = new List<RootFolder>(),
+                RenameFiles = true,
+                StandardFileFormat = "{Series} - {Season}{Episode}{Part} - {Event Title} - {Quality Full}",
+                CreateEventFolder = true,
+                EventFolderFormat = "{Series}/Season {Season}",
+                CopyFiles = false,
+                MinimumFreeSpace = 100,
+                RemoveCompletedDownloads = true
+            };
+        }
+
+        // Load root folders from separate table
+        var rootFolders = await _db.RootFolders.ToListAsync();
+        if (rootFolders.Any())
+        {
+            foreach (var folder in rootFolders)
+            {
+                folder.Accessible = Directory.Exists(folder.Path);
+            }
+            settings.RootFolders = rootFolders;
+        }
+
+        return settings;
+    }
+
+    /// <summary>
+    /// Calculate episode number for an event (same logic as FileImportService)
+    /// </summary>
+    private async Task<int> CalculateEpisodeNumberAsync(Event eventInfo)
+    {
+        if (!eventInfo.LeagueId.HasValue)
+            return 1;
+
+        var season = eventInfo.Season ?? eventInfo.SeasonNumber?.ToString() ?? eventInfo.EventDate.Year.ToString();
+
+        var eventsInSeason = await _db.Events
+            .Where(e => e.LeagueId == eventInfo.LeagueId &&
+                       (e.Season == season ||
+                        (e.SeasonNumber.HasValue && e.SeasonNumber.ToString() == season) ||
+                        e.EventDate.Year.ToString() == season))
+            .OrderBy(e => e.EventDate)
+            .ThenBy(e => e.ExternalId)
+            .Select(e => new { e.Id, e.EventDate, e.ExternalId })
+            .ToListAsync();
+
+        if (eventsInSeason.Count == 0)
+            return 1;
+
+        var position = eventsInSeason.FindIndex(e => e.Id == eventInfo.Id);
+        if (position < 0)
+        {
+            position = eventsInSeason.Count(e => e.EventDate < eventInfo.EventDate ||
+                (e.EventDate == eventInfo.EventDate && string.Compare(e.ExternalId, eventInfo.ExternalId, StringComparison.Ordinal) < 0));
+        }
+
+        return position + 1;
     }
 
     private static string SanitizeFileName(string name)
@@ -535,11 +674,11 @@ public class DvrRecordingService
 
     /// <summary>
     /// Map channel's detected quality to HDTV quality name for scoring
-    /// Uses both DetectedQuality string and QualityScore for best accuracy
+    /// Uses QualityScore, DetectedQuality, and channel name for best accuracy
     /// </summary>
-    private static string MapChannelQualityToHdtvQuality(string? detectedQuality, int qualityScore)
+    private static string MapChannelQualityToHdtvQuality(string? detectedQuality, int qualityScore, string? channelName = null)
     {
-        // First try to map by quality score (more reliable)
+        // First try to map by quality score (most reliable if available)
         if (qualityScore >= 400)
             return "HDTV-2160p";  // 4K/UHD
         if (qualityScore >= 300)
@@ -549,7 +688,7 @@ public class DvrRecordingService
         if (qualityScore >= 100)
             return "SDTV";        // SD
 
-        // Fall back to string matching if score is 0 or unknown
+        // Try detected quality string
         if (!string.IsNullOrEmpty(detectedQuality))
         {
             var quality = detectedQuality.ToUpperInvariant();
@@ -560,6 +699,25 @@ public class DvrRecordingService
             if (quality.Contains("HD") || quality.Contains("720"))
                 return "HDTV-720p";
             if (quality.Contains("SD") || quality.Contains("480") || quality.Contains("576"))
+                return "SDTV";
+        }
+
+        // Fall back to channel name - many channels include quality in their name
+        // e.g., "Sky Sports 4K", "ESPN HD", "BBC One FHD"
+        if (!string.IsNullOrEmpty(channelName))
+        {
+            var name = channelName.ToUpperInvariant();
+            // Check for 4K/UHD first (most specific)
+            if (name.Contains("4K") || name.Contains("UHD") || name.Contains("2160"))
+                return "HDTV-2160p";
+            // Check for FHD (before HD to avoid false matches)
+            if (name.Contains("FHD") || name.Contains("1080"))
+                return "HDTV-1080p";
+            // Check for HD/720p
+            if (name.Contains(" HD") || name.Contains("-HD") || name.Contains("720"))
+                return "HDTV-720p";
+            // Check for SD
+            if (name.Contains(" SD") || name.Contains("-SD") || name.Contains("480") || name.Contains("576"))
                 return "SDTV";
         }
 
