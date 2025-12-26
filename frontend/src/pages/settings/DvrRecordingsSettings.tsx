@@ -870,15 +870,15 @@ export default function DvrRecordingsSettings() {
                             <input
                               type="range"
                               min="0.5"
-                              max="15"
-                              step="0.1"
+                              max="50"
+                              step="0.5"
                               value={gbPerHour}
                               onChange={(e) => handleGbPerHourChange(parseFloat(e.target.value))}
                               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-600"
                             />
                             <div className="flex justify-between text-xs text-gray-500 mt-1">
-                              <span>0.5 GB/hr (Low)</span>
-                              <span>15 GB/hr (High)</span>
+                              <span>0.5 GB/hr</span>
+                              <span>50 GB/hr</span>
                             </div>
                             <p className="text-xs text-gray-500 mt-2">
                               Video Bitrate: {(editingProfile.videoBitrate / 1000).toFixed(1)} Mbps
