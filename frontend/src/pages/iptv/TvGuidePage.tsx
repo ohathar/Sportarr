@@ -246,8 +246,17 @@ export default function TvGuidePage() {
     const newParams = new URLSearchParams(searchParams);
     if (value) {
       newParams.set(key, 'true');
+      // For enabledOnly, remove param when true (default state)
+      if (key === 'enabledOnly') {
+        newParams.delete(key);
+      }
     } else {
-      newParams.delete(key);
+      // For enabledOnly, explicitly set 'false' since default is true
+      if (key === 'enabledOnly') {
+        newParams.set(key, 'false');
+      } else {
+        newParams.delete(key);
+      }
     }
     setSearchParams(newParams);
   };
