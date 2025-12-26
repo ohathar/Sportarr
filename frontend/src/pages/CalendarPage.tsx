@@ -1,6 +1,6 @@
 import { useEvents } from '../api/hooks';
-import { ChevronLeftIcon, ChevronRightIcon, TvIcon, FunnelIcon } from '@heroicons/react/24/outline';
-import { useState } from 'react';
+import { ChevronLeftIcon, ChevronRightIcon, TvIcon, FunnelIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Event, Image } from '../types';
 import { useTimezone } from '../hooks/useTimezone';
@@ -57,6 +57,7 @@ export default function CalendarPage() {
   const [filterSport, setFilterSport] = useState<string>('all');
   const [filterTvOnly, setFilterTvOnly] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   // Get unique sports from events for filter
   const uniqueSports = Array.from(new Set(events?.map(e => e.sport).filter(Boolean))) as string[];
@@ -125,6 +126,27 @@ export default function CalendarPage() {
     return `${startMonth} ${startDay} - ${endMonth} ${endDay}, ${year}`;
   };
 
+  // Navigate to a specific date
+  const goToDate = (dateString: string) => {
+    const selectedDate = new Date(dateString + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Calculate the week offset from today
+    const todayDayOfWeek = today.getDay();
+    const todayWeekStart = new Date(today);
+    todayWeekStart.setDate(today.getDate() - todayDayOfWeek);
+
+    const selectedDayOfWeek = selectedDate.getDay();
+    const selectedWeekStart = new Date(selectedDate);
+    selectedWeekStart.setDate(selectedDate.getDate() - selectedDayOfWeek);
+
+    const diffTime = selectedWeekStart.getTime() - todayWeekStart.getTime();
+    const diffWeeks = Math.round(diffTime / (7 * 24 * 60 * 60 * 1000));
+
+    setCurrentWeekOffset(diffWeeks);
+  };
+
   const isToday = (date: Date) => {
     const today = new Date();
     return date.getDate() === today.getDate() &&
@@ -155,7 +177,7 @@ export default function CalendarPage() {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="mx-auto">
         {/* Header */}
         <div className="mb-4 md:mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
@@ -167,7 +189,7 @@ export default function CalendarPage() {
             </div>
 
             {/* Week Navigation */}
-            <div className="flex items-center justify-center gap-2 md:gap-4">
+            <div className="flex items-center justify-center gap-2 md:gap-3">
               <button
                 onClick={() => setCurrentWeekOffset(currentWeekOffset - 1)}
                 className="p-2 hover:bg-red-900/20 rounded-lg transition-colors"
@@ -176,8 +198,9 @@ export default function CalendarPage() {
                 <ChevronLeftIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
               </button>
 
-              <div className="text-center min-w-[140px] md:min-w-[200px]">
-                <p className="text-sm md:text-lg font-semibold text-white">{formatWeekRange()}</p>
+              {/* Fixed width container for date range */}
+              <div className="text-center w-[180px] md:w-[280px]">
+                <p className="text-sm md:text-lg font-semibold text-white truncate">{formatWeekRange()}</p>
                 {currentWeekOffset === 0 && (
                   <p className="text-xs md:text-sm text-red-400">Current Week</p>
                 )}
@@ -190,6 +213,34 @@ export default function CalendarPage() {
               >
                 <ChevronRightIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
               </button>
+
+              {/* Date Picker */}
+              <div className="relative">
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  className="absolute opacity-0 w-0 h-0"
+                  onChange={(e) => e.target.value && goToDate(e.target.value)}
+                />
+                <button
+                  onClick={() => dateInputRef.current?.showPicker()}
+                  className="p-2 hover:bg-red-900/20 rounded-lg transition-colors"
+                  title="Go to date"
+                >
+                  <CalendarDaysIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
+                </button>
+              </div>
+
+              {/* Today Button */}
+              {currentWeekOffset !== 0 && (
+                <button
+                  onClick={() => setCurrentWeekOffset(0)}
+                  className="px-2 md:px-3 py-1 text-xs md:text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                  title="Go to current week"
+                >
+                  Today
+                </button>
+              )}
             </div>
           </div>
 
@@ -285,66 +336,46 @@ export default function CalendarPage() {
                     dayEvents.map(event => {
                       const sportColors = getSportColors(event.sport || 'default');
                       const isLive = isEventLive(event, timezone);
+                      const isMultiColumn = dayEvents.length >= 2;
 
                       return (
                         <div
                           key={event.id}
                           onClick={() => event.leagueId && navigate(`/leagues/${event.leagueId}`)}
-                          className={`${sportColors.bg} hover:opacity-80 border ${isLive ? 'border-red-500 ring-2 ring-red-500/50 animate-pulse' : sportColors.border} rounded p-2 transition-all cursor-pointer group relative`}
+                          className={`${sportColors.bg} hover:opacity-80 border ${isLive ? 'border-red-500 ring-2 ring-red-500/50 animate-pulse' : sportColors.border} rounded p-1.5 transition-all cursor-pointer group relative`}
+                          title={`${event.title}${event.venue ? `\n${event.venue}` : ''}${event.broadcast ? `\n📺 ${event.broadcast}` : ''}`}
                         >
-                          <div className="flex items-start gap-2">
-                            {/* Event Thumbnail */}
-                            {event.images?.[0] && (
-                              <div className="w-8 h-10 bg-gray-950 rounded overflow-hidden flex-shrink-0">
-                                <img
-                                  src={getImageUrl(event.images)}
-                                  alt={event.title}
-                                  className="w-full h-full object-cover"
-                                />
-                              </div>
+                          {/* Compact layout for multi-column view */}
+                          <div className="min-w-0">
+                            {/* Sport Badge - smaller in multi-column */}
+                            {event.sport && (
+                              <span className={`inline-block px-1 py-0.5 ${sportColors.badge} text-white text-[10px] rounded mb-0.5`}>
+                                {event.sport}
+                              </span>
                             )}
 
-                            {/* Event Details */}
-                            <div className="flex-1 min-w-0">
-                              {/* Sport Badge */}
-                              {event.sport && (
-                                <span className={`inline-block px-1.5 py-0.5 ${sportColors.badge} text-white text-xs rounded mb-1`}>
-                                  {event.sport}
+                            {/* Title - truncate more aggressively in multi-column */}
+                            <p className={`text-[11px] font-semibold text-white group-hover:text-gray-200 transition-colors ${isMultiColumn ? 'line-clamp-2' : 'line-clamp-2'}`}>
+                              {event.title}
+                            </p>
+
+                            {/* Status indicators - compact row */}
+                            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                              {isLive && (
+                                <span className="px-1 py-0.5 bg-red-600 text-white text-[9px] rounded animate-pulse font-bold">
+                                  LIVE
                                 </span>
                               )}
-
-                              <p className="text-xs font-semibold text-white line-clamp-2 group-hover:text-gray-200 transition-colors">
-                                {event.title}
-                              </p>
-
-                              {/* TV Broadcast Badge */}
-                              {event.broadcast && (
-                                <div className="flex items-center gap-1 mt-1">
-                                  <TvIcon className="w-3 h-3 text-green-400" />
-                                  <span className="text-xs text-green-400 font-medium line-clamp-1">
-                                    {event.broadcast}
-                                  </span>
-                                </div>
+                              {event.hasFile && (
+                                <span className="px-1 py-0.5 bg-green-600/30 text-green-400 text-[9px] rounded">
+                                  ✓
+                                </span>
                               )}
-
-                              {event.venue && !event.broadcast && (
-                                <p className="text-xs text-gray-500 line-clamp-1 mt-1">
-                                  {event.venue}
-                                </p>
+                              {event.broadcast && !isMultiColumn && (
+                                <span className="flex items-center gap-0.5 text-[9px] text-green-400">
+                                  <TvIcon className="w-2.5 h-2.5" />
+                                </span>
                               )}
-
-                              <div className="flex items-center gap-1 mt-1">
-                                {event.hasFile && (
-                                  <span className="px-1.5 py-0.5 bg-green-600/20 text-green-400 text-xs rounded">
-                                    ✓ Downloaded
-                                  </span>
-                                )}
-                                {isLive && (
-                                  <span className="px-1.5 py-0.5 bg-red-600 text-white text-xs rounded animate-pulse font-bold">
-                                    🔴 LIVE
-                                  </span>
-                                )}
-                              </div>
                             </div>
                           </div>
                         </div>

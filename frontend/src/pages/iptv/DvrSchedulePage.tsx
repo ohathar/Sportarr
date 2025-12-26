@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ClockIcon,
@@ -82,6 +82,7 @@ export default function DvrSchedulePage() {
   const [showFilters, setShowFilters] = useState(false);
   const { timezone } = useTimezone();
   const navigate = useNavigate();
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadData();
@@ -153,6 +154,27 @@ export default function DvrSchedulePage() {
       return `${startMonth} ${startDay} - ${endDay}, ${year}`;
     }
     return `${startMonth} ${startDay} - ${endMonth} ${endDay}, ${year}`;
+  };
+
+  // Navigate to a specific date
+  const goToDate = (dateString: string) => {
+    const selectedDate = new Date(dateString + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Calculate the week offset from today
+    const todayDayOfWeek = today.getDay();
+    const todayWeekStart = new Date(today);
+    todayWeekStart.setDate(today.getDate() - todayDayOfWeek);
+
+    const selectedDayOfWeek = selectedDate.getDay();
+    const selectedWeekStart = new Date(selectedDate);
+    selectedWeekStart.setDate(selectedDate.getDate() - selectedDayOfWeek);
+
+    const diffTime = selectedWeekStart.getTime() - todayWeekStart.getTime();
+    const diffWeeks = Math.round(diffTime / (7 * 24 * 60 * 60 * 1000));
+
+    setCurrentWeekOffset(diffWeeks);
   };
 
   // Group recordings by date (in user's timezone)
@@ -230,7 +252,7 @@ export default function DvrSchedulePage() {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="mx-auto">
         {/* Header */}
         <div className="mb-4 md:mb-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
@@ -242,7 +264,7 @@ export default function DvrSchedulePage() {
             </div>
 
             {/* Week Navigation */}
-            <div className="flex items-center justify-center gap-2 md:gap-4">
+            <div className="flex items-center justify-center gap-2 md:gap-3">
               <button
                 onClick={() => setCurrentWeekOffset(currentWeekOffset - 1)}
                 className="p-2 hover:bg-red-900/20 rounded-lg transition-colors"
@@ -251,8 +273,9 @@ export default function DvrSchedulePage() {
                 <ChevronLeftIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
               </button>
 
-              <div className="text-center min-w-[140px] md:min-w-[200px]">
-                <p className="text-sm md:text-lg font-semibold text-white">{formatWeekRange()}</p>
+              {/* Fixed width container for date range */}
+              <div className="text-center w-[180px] md:w-[280px]">
+                <p className="text-sm md:text-lg font-semibold text-white truncate">{formatWeekRange()}</p>
                 {currentWeekOffset === 0 && (
                   <p className="text-xs md:text-sm text-red-400">Current Week</p>
                 )}
@@ -265,6 +288,34 @@ export default function DvrSchedulePage() {
               >
                 <ChevronRightIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
               </button>
+
+              {/* Date Picker */}
+              <div className="relative">
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  className="absolute opacity-0 w-0 h-0"
+                  onChange={(e) => e.target.value && goToDate(e.target.value)}
+                />
+                <button
+                  onClick={() => dateInputRef.current?.showPicker()}
+                  className="p-2 hover:bg-red-900/20 rounded-lg transition-colors"
+                  title="Go to date"
+                >
+                  <CalendarDaysIcon className="w-5 md:w-6 h-5 md:h-6 text-gray-400 hover:text-white" />
+                </button>
+              </div>
+
+              {/* Today Button */}
+              {currentWeekOffset !== 0 && (
+                <button
+                  onClick={() => setCurrentWeekOffset(0)}
+                  className="px-2 md:px-3 py-1 text-xs md:text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                  title="Go to current week"
+                >
+                  Today
+                </button>
+              )}
             </div>
           </div>
 
@@ -385,42 +436,38 @@ export default function DvrSchedulePage() {
                       dayRecordings.map(recording => {
                         const statusColors = getStatusColors(recording.status);
                         const isRecording = recording.status === 'Recording';
+                        const isMultiColumn = dayRecordings.length >= 2;
 
                         return (
                           <div
                             key={recording.id}
                             onClick={() => recording.leagueId && navigate(`/leagues/${recording.leagueId}`)}
-                            className={`${statusColors.bg} hover:opacity-80 border ${isRecording ? 'border-red-500 ring-2 ring-red-500/50 animate-pulse' : statusColors.border} rounded p-2 transition-all cursor-pointer group relative`}
-                            title={`${recording.eventTitle}\n${formatTime(recording.scheduledStart)} - ${formatTime(recording.scheduledEnd)}\n${recording.channelName}`}
+                            className={`${statusColors.bg} hover:opacity-80 border ${isRecording ? 'border-red-500 ring-2 ring-red-500/50 animate-pulse' : statusColors.border} rounded p-1.5 transition-all cursor-pointer group relative`}
+                            title={`${recording.eventTitle}\n${formatTime(recording.scheduledStart)} - ${formatTime(recording.scheduledEnd)}\n📡 ${recording.channelName}`}
                           >
-                            <div className="flex items-start gap-2">
-                              {/* Recording Details */}
-                              <div className="flex-1 min-w-0">
-                                {/* Status Badge */}
-                                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 ${statusColors.badge} text-white text-xs rounded mb-1`}>
-                                  {getStatusIcon(recording.status)}
-                                  {recording.status}
-                                </span>
+                            {/* Compact layout */}
+                            <div className="min-w-0">
+                              {/* Status Badge - compact */}
+                              <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 ${statusColors.badge} text-white text-[10px] rounded mb-0.5`}>
+                                {getStatusIcon(recording.status)}
+                                {recording.status}
+                              </span>
 
-                                <p className="text-xs font-semibold text-white line-clamp-2 group-hover:text-gray-200 transition-colors">
-                                  {recording.eventTitle}
-                                </p>
+                              {/* Title */}
+                              <p className="text-[11px] font-semibold text-white line-clamp-2 group-hover:text-gray-200 transition-colors">
+                                {recording.eventTitle}
+                              </p>
 
-                                {/* Time */}
-                                <div className="flex items-center gap-1 mt-1">
-                                  <ClockIcon className="w-3 h-3 text-gray-400" />
-                                  <span className="text-xs text-gray-400">
-                                    {formatTime(recording.scheduledStart)}
-                                  </span>
-                                </div>
-
-                                {/* Channel */}
-                                <div className="flex items-center gap-1 mt-0.5">
-                                  <SignalIcon className="w-3 h-3 text-gray-500" />
-                                  <span className="text-xs text-gray-500 line-clamp-1">
-                                    {recording.channelName}
-                                  </span>
-                                </div>
+                              {/* Time & Channel - compact */}
+                              <div className="flex items-center gap-1 mt-0.5 text-[9px] text-gray-400">
+                                <ClockIcon className="w-2.5 h-2.5" />
+                                <span>{formatTime(recording.scheduledStart)}</span>
+                                {!isMultiColumn && (
+                                  <>
+                                    <SignalIcon className="w-2.5 h-2.5 ml-1" />
+                                    <span className="truncate">{recording.channelName}</span>
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
