@@ -93,10 +93,14 @@ RUN apt-get update && \
             # Intel Quick Sync Video (QSV)
             # intel-media-va-driver-non-free: Modern driver for 8th gen+ (HEVC/AV1)
             # i965-va-driver: Legacy driver for 6th/7th gen (H.264)
-            # libmfx1: Intel Media SDK runtime (QSV framework)
             intel-media-va-driver-non-free \
             i965-va-driver \
+            # Intel Media SDK / oneVPL runtime (QSV framework)
+            # libmfx-gen1.2: Modern oneVPL implementation for 8th gen+ (recommended)
+            # libmfx1: Legacy Intel Media SDK for older processors
+            libmfx-gen1.2 \
             libmfx1 \
+            libvpl2 \
             # OpenCL support (Intel GPU compute)
             intel-opencl-icd \
             ocl-icd-libopencl1; \
