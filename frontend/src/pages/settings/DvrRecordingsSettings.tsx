@@ -171,14 +171,39 @@ interface HardwareAccelerationInfo {
   isAvailable: boolean;
 }
 
-// Hardware acceleration enum values
-const HardwareAccelerationOptions: { value: number; label: string; description: string }[] = [
+// Hardware acceleration enum values with Docker requirements (matching Tdarr's approach)
+const HardwareAccelerationOptions: { value: number; label: string; description: string; dockerRequirements?: string }[] = [
   { value: 0, label: 'None', description: 'Software encoding only (CPU)' },
-  { value: 1, label: 'NVENC (NVIDIA)', description: 'NVIDIA GPU hardware encoding' },
-  { value: 2, label: 'QuickSync (Intel)', description: 'Intel GPU hardware encoding' },
-  { value: 3, label: 'AMF (AMD)', description: 'AMD GPU hardware encoding' },
-  { value: 4, label: 'VAAPI (Linux)', description: 'Linux hardware encoding (Intel/AMD)' },
-  { value: 5, label: 'VideoToolbox (macOS)', description: 'macOS hardware encoding' },
+  {
+    value: 1,
+    label: 'NVENC (NVIDIA)',
+    description: 'NVIDIA GPU hardware encoding',
+    dockerRequirements: 'Docker: --gpus=all, Environment: NVIDIA_DRIVER_CAPABILITIES=all, NVIDIA_VISIBLE_DEVICES=all'
+  },
+  {
+    value: 2,
+    label: 'QuickSync (Intel)',
+    description: 'Intel GPU hardware encoding',
+    dockerRequirements: 'Docker: devices: /dev/dri:/dev/dri (Intel 8th gen+ recommended)'
+  },
+  {
+    value: 3,
+    label: 'AMF (AMD)',
+    description: 'AMD GPU hardware encoding',
+    dockerRequirements: 'Docker: devices: /dev/dri:/dev/dri, /dev/kfd:/dev/kfd (Windows: use d3d11va)'
+  },
+  {
+    value: 4,
+    label: 'VAAPI (Linux)',
+    description: 'Linux hardware encoding (Intel/AMD)',
+    dockerRequirements: 'Docker: devices: /dev/dri:/dev/dri (requires mesa-va-drivers)'
+  },
+  {
+    value: 5,
+    label: 'VideoToolbox (macOS)',
+    description: 'macOS hardware encoding',
+    dockerRequirements: 'Native macOS only (not available in Docker)'
+  },
   { value: 99, label: 'Auto-detect', description: 'Automatically detect best available encoder' },
 ];
 
@@ -1231,16 +1256,26 @@ export default function DvrRecordingsSettings() {
                     </p>
                     {(() => {
                       const selected = dvrSettings.hardwareAcceleration;
+                      const selectedOption = HardwareAccelerationOptions.find(o => o.value === selected);
                       const hwInfo = availableHwAccel.find(h => h.type === selected);
                       const isDetected = selected === 0 || selected === 99 || hwInfo?.isAvailable;
-                      if (!isDetected && selected !== 0 && selected !== 99 && availableHwAccel.length > 0) {
-                        return (
-                          <p className="text-xs text-yellow-500 mt-1">
-                            This encoder was not detected on the current system. It may still work if available in your Docker container or runtime environment.
-                          </p>
-                        );
-                      }
-                      return null;
+
+                      return (
+                        <>
+                          {/* Show Docker requirements for hardware encoders */}
+                          {selectedOption?.dockerRequirements && (
+                            <p className="text-xs text-blue-400 mt-1 font-mono">
+                              {selectedOption.dockerRequirements}
+                            </p>
+                          )}
+                          {/* Show warning if not detected */}
+                          {!isDetected && selected !== 0 && selected !== 99 && availableHwAccel.length > 0 && (
+                            <p className="text-xs text-yellow-500 mt-1">
+                              ⚠️ Not detected - ensure Docker has access to GPU device. Will fall back to software encoding if unavailable.
+                            </p>
+                          )}
+                        </>
+                      );
                     })()}
                   </div>
                   <div>
