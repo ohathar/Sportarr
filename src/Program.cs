@@ -98,6 +98,38 @@ var logsPath = Path.Combine(dataPath, "logs");
 Directory.CreateDirectory(logsPath);
 Console.WriteLine($"[Sportarr] Logs directory: {logsPath}");
 
+// Read log level from config.xml if it exists (like Sonarr)
+// This controls what actually gets written to log files
+var configuredLogLevel = LogEventLevel.Information; // Default to Info
+var configPath = Path.Combine(dataPath, "config.xml");
+if (File.Exists(configPath))
+{
+    try
+    {
+        var configXml = System.Xml.Linq.XDocument.Load(configPath);
+        var logLevelElement = configXml.Root?.Element("LogLevel");
+        if (logLevelElement != null)
+        {
+            var logLevelStr = logLevelElement.Value?.ToLower() ?? "info";
+            configuredLogLevel = logLevelStr switch
+            {
+                "trace" => LogEventLevel.Verbose,  // Serilog uses Verbose for Trace
+                "debug" => LogEventLevel.Debug,
+                "info" or "information" => LogEventLevel.Information,
+                "warn" or "warning" => LogEventLevel.Warning,
+                "error" => LogEventLevel.Error,
+                "fatal" => LogEventLevel.Fatal,
+                _ => LogEventLevel.Information
+            };
+            Console.WriteLine($"[Sportarr] Log level from config: {logLevelStr} -> {configuredLogLevel}");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Sportarr] Warning: Could not read log level from config.xml: {ex.Message}");
+    }
+}
+
 // Output template for logs (shared between console and file)
 var outputTemplate = "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz}] [{Level:u3}] {Message:lj}{NewLine}{Exception}";
 
@@ -105,11 +137,13 @@ var outputTemplate = "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz}] [{Level:u3}] {Me
 var sanitizingFormatter = new SanitizingTextFormatter(outputTemplate);
 
 // Configure Serilog like Sonarr:
-// - Main log file: sportarr.txt with rolling by size (1MB like Sonarr) and day
-// - Retained file count: 31 files (like Sonarr default)
+// - Main log file: sportarr.txt with rolling by size and day
+// - Retained file count: 10 files (manageable storage)
+// - File size: 10MB per file (reduces number of files created)
 // - When file reaches size limit, rolls to sportarr_001.txt, sportarr_002.txt, etc.
+// - Oldest files are automatically deleted when limit is reached
 Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
+    .MinimumLevel.Is(configuredLogLevel)      // Use configured log level
     .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
     .MinimumLevel.Override("System", LogEventLevel.Warning)
@@ -119,8 +153,8 @@ Log.Logger = new LoggerConfiguration()
         formatter: sanitizingFormatter,
         path: Path.Combine(logsPath, "sportarr.txt"),
         rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 31,           // Keep 31 files like Sonarr
-        fileSizeLimitBytes: 1048576,          // 1MB per file like Sonarr
+        retainedFileCountLimit: 10,           // Keep only 10 files for storage management
+        fileSizeLimitBytes: 10485760,         // 10MB per file (reduces file count)
         rollOnFileSizeLimit: true,            // Roll when size limit reached
         shared: true,                         // Allow multiple processes to write
         flushToDiskInterval: TimeSpan.FromSeconds(1))
