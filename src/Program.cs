@@ -293,6 +293,7 @@ builder.Services.AddSingleton<Sportarr.Api.Services.DiskSpaceService>(); // Disk
 builder.Services.AddScoped<Sportarr.Api.Services.HealthCheckService>();
 builder.Services.AddScoped<Sportarr.Api.Services.BackupService>();
 builder.Services.AddScoped<Sportarr.Api.Services.LibraryImportService>();
+builder.Services.AddScoped<Sportarr.Api.Services.NotificationService>(); // Multi-provider notifications (Discord, Telegram, Pushover, etc.)
 builder.Services.AddScoped<Sportarr.Api.Services.ImportListService>();
 builder.Services.AddScoped<Sportarr.Api.Services.ImportService>(); // Handles completed download imports
 builder.Services.AddScoped<Sportarr.Api.Services.ProvideImportItemService>(); // Provides import items with path translation
@@ -3856,6 +3857,29 @@ app.MapDelete("/api/notification/{id:int}", async (int id, SportarrDbContext db)
     db.Notifications.Remove(notification);
     await db.SaveChangesAsync();
     return Results.NoContent();
+});
+
+// API: Test Notification
+app.MapPost("/api/notification/{id:int}/test", async (int id, SportarrDbContext db, Sportarr.Api.Services.NotificationService notificationService) =>
+{
+    var notification = await db.Notifications.FindAsync(id);
+    if (notification is null) return Results.NotFound();
+
+    var (success, message) = await notificationService.TestNotificationAsync(notification);
+
+    return success
+        ? Results.Ok(new { success = true, message })
+        : Results.BadRequest(new { success = false, message });
+});
+
+// API: Test Notification with payload (for testing before saving)
+app.MapPost("/api/notification/test", async (Notification notification, Sportarr.Api.Services.NotificationService notificationService) =>
+{
+    var (success, message) = await notificationService.TestNotificationAsync(notification);
+
+    return success
+        ? Results.Ok(new { success = true, message })
+        : Results.BadRequest(new { success = false, message });
 });
 
 // API: Config (lightweight endpoint for specific config values)
