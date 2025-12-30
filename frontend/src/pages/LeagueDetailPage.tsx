@@ -859,13 +859,27 @@ export default function LeagueDetailPage() {
     return acc;
   }, {} as Record<string, EventDetail[]>);
 
+  // Sort events within each season by episode number (descending - newest first)
+  Object.keys(groupedEvents).forEach(season => {
+    groupedEvents[season].sort((a, b) => {
+      // Sort by episode number descending (highest/newest first)
+      const epA = a.episodeNumber ?? 0;
+      const epB = b.episodeNumber ?? 0;
+      if (epA !== epB) return epB - epA;
+      // Fallback to event date descending
+      return new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime();
+    });
+  });
+
   // Sort seasons newest first
   const sortedSeasons = Object.keys(groupedEvents).sort((a, b) => {
     // Handle 'Unknown' season
     if (a === 'Unknown') return 1;
     if (b === 'Unknown') return -1;
-    // Sort numerically for years
-    return parseInt(b) - parseInt(a);
+    // Sort numerically for years (handle multi-year seasons like "2024-2025")
+    const yearA = parseInt(a.split('-')[0]);
+    const yearB = parseInt(b.split('-')[0]);
+    return yearB - yearA;
   });
 
   // Toggle season expansion
