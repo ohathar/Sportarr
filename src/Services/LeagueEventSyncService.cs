@@ -241,9 +241,8 @@ public class LeagueEventSyncService
                             renumberedCount, seasonStr);
 
                         // Rename all files in this season to reflect new episode numbers
-                        // Force rename since episode numbers are being corrected to match Plex metadata
                         var renamedCount = await _fileRenameService.RenameAllFilesInSeasonAsync(
-                            seasonLeagueId, seasonStr, forceRename: true);
+                            seasonLeagueId, seasonStr);
 
                         if (renamedCount > 0)
                         {
@@ -443,12 +442,7 @@ public class LeagueEventSyncService
                 {
                     try
                     {
-                        // Force rename when episode number is corrected to match Plex metadata
-                        // This is critical for proper media matching, even if RenameEvents setting is disabled
-                        var renamedFiles = await _fileRenameService.RenameEventFilesAsync(
-                            existingEvent.Id,
-                            settings: null,
-                            forceRename: episodeNumberChanged);
+                        var renamedFiles = await _fileRenameService.RenameEventFilesAsync(existingEvent.Id);
                         if (renamedFiles > 0)
                         {
                             _logger.LogInformation("[League Event Sync] Renamed {Count} files for event '{Title}'",

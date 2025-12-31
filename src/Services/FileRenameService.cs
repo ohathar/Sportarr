@@ -123,10 +123,8 @@ public class FileRenameService
     /// </summary>
     /// <param name="eventId">Event ID</param>
     /// <param name="settings">Media management settings (optional, will load from DB if not provided)</param>
-    /// <param name="forceRename">If true, rename files even if RenameEvents setting is disabled.
-    /// Used when correcting episode numbers to match Plex metadata - critical for proper media matching.</param>
     /// <returns>Number of files renamed</returns>
-    public async Task<int> RenameEventFilesAsync(int eventId, MediaManagementSettings? settings = null, bool forceRename = false)
+    public async Task<int> RenameEventFilesAsync(int eventId, MediaManagementSettings? settings = null)
     {
         var evt = await _db.Events
             .Include(e => e.League)
@@ -148,8 +146,8 @@ public class FileRenameService
         // Load settings if not provided
         settings ??= await LoadMediaManagementSettingsAsync();
 
-        // Skip renaming if user has it disabled (unless forced for episode number correction)
-        if (!settings.RenameEvents && !forceRename)
+        // Skip renaming if user has it disabled
+        if (!settings.RenameEvents)
         {
             _logger.LogDebug("[File Rename] Renaming disabled in settings, skipping event '{Title}'", evt.Title);
             return 0;
@@ -281,16 +279,14 @@ public class FileRenameService
     /// Rename all files for all events in a league/season.
     /// Typically called after episode renumbering.
     /// </summary>
-    /// <param name="forceRename">If true, rename files even if RenameEvents setting is disabled.
-    /// Used when correcting episode numbers to match Plex metadata.</param>
-    public async Task<int> RenameAllFilesInSeasonAsync(int leagueId, string? season, bool forceRename = false)
+    public async Task<int> RenameAllFilesInSeasonAsync(int leagueId, string? season)
     {
         if (string.IsNullOrEmpty(season))
             return 0;
 
         var settings = await LoadMediaManagementSettingsAsync();
 
-        if (!settings.RenameEvents && !forceRename)
+        if (!settings.RenameEvents)
         {
             _logger.LogInformation("[File Rename] Renaming disabled in settings, skipping season rename");
             return 0;
@@ -307,7 +303,7 @@ public class FileRenameService
 
         foreach (var evt in events)
         {
-            var renamed = await RenameEventFilesAsync(evt.Id, settings, forceRename);
+            var renamed = await RenameEventFilesAsync(evt.Id, settings);
             totalRenamed += renamed;
         }
 
