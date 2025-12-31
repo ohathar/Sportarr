@@ -472,6 +472,75 @@ public class EventPartDetector
     }
 
     /// <summary>
+    /// Detect the session type from a release filename for motorsports.
+    /// Uses the same patterns as DetectMotorsportSessionType but works on filenames.
+    /// This is used for release matching to ensure FP1 releases match FP1 events.
+    /// </summary>
+    /// <param name="filename">The release filename (e.g., "Formula1.2025.Abu.Dhabi.FP1.1080p-GROUP")</param>
+    /// <returns>The detected session type name, or null if not detected</returns>
+    public static string? DetectMotorsportSessionFromFilename(string filename)
+    {
+        if (string.IsNullOrEmpty(filename))
+            return null;
+
+        // Clean the filename for matching (replace dots/underscores with spaces)
+        var cleanFilename = filename.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ').ToLowerInvariant();
+
+        // Try all known motorsport session patterns (currently F1, but extensible)
+        foreach (var kvp in MotorsportSessionsByLeague)
+        {
+            foreach (var session in kvp.Value)
+            {
+                foreach (var pattern in session.Patterns)
+                {
+                    if (Regex.IsMatch(cleanFilename, pattern, RegexOptions.IgnoreCase))
+                    {
+                        return session.Name;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Normalize a motorsport session name to a canonical form for comparison.
+    /// Maps variations like "Free Practice 1", "Practice 1", "FP1" all to "Practice 1".
+    /// </summary>
+    public static string? NormalizeMotorsportSession(string? sessionName)
+    {
+        if (string.IsNullOrEmpty(sessionName))
+            return null;
+
+        var lower = sessionName.ToLowerInvariant().Trim();
+
+        // Practice sessions
+        if (lower.Contains("practice 1") || lower.Contains("fp1") || lower.Contains("free practice 1"))
+            return "Practice 1";
+        if (lower.Contains("practice 2") || lower.Contains("fp2") || lower.Contains("free practice 2"))
+            return "Practice 2";
+        if (lower.Contains("practice 3") || lower.Contains("fp3") || lower.Contains("free practice 3"))
+            return "Practice 3";
+
+        // Sprint sessions
+        if (lower.Contains("sprint qualifying") || lower.Contains("sprint shootout") || lower.Contains("sprint quali"))
+            return "Sprint Qualifying";
+        if (lower.Contains("sprint") && !lower.Contains("qualifying") && !lower.Contains("shootout") && !lower.Contains("quali"))
+            return "Sprint";
+
+        // Qualifying
+        if (lower.Contains("qualifying") || lower.Contains("quali"))
+            return "Qualifying";
+
+        // Race
+        if (lower.Contains("race") || lower.Contains("grand prix") || lower == "gp")
+            return "Race";
+
+        return sessionName; // Return as-is if no normalization needed
+    }
+
+    /// <summary>
     /// Check if an event matches the monitored session types for a motorsport league
     /// </summary>
     /// <param name="eventTitle">The event title</param>

@@ -295,11 +295,67 @@ public class ReleaseMatchingService
             // else: Multi-part enabled but no specific part requested - accept any (parts or full event)
         }
 
-        // VALIDATION 6: Word overlap between titles
+        // VALIDATION 6: Motorsport session type validation
+        // For motorsport events, each session (FP1, FP2, Qualifying, Race) is a separate event
+        // We need to ensure "FP1" releases match "Free Practice 1" events, not "Race" events
+        var isMotorsport = EventPartDetector.IsMotorsport(evt.Sport ?? "");
+        if (isMotorsport)
+        {
+            // Detect session type from both event title and release filename
+            var eventSession = EventPartDetector.DetectMotorsportSessionType(evt.Title, evt.League?.Name ?? "");
+            var releaseSession = EventPartDetector.DetectMotorsportSessionFromFilename(release.Title);
+
+            _logger.LogDebug("[Release Matching] Motorsport session validation: event='{EventSession}', release='{ReleaseSession}'",
+                eventSession ?? "unknown", releaseSession ?? "unknown");
+
+            if (eventSession != null && releaseSession != null)
+            {
+                // Normalize both session names for comparison
+                var normalizedEventSession = EventPartDetector.NormalizeMotorsportSession(eventSession);
+                var normalizedReleaseSession = EventPartDetector.NormalizeMotorsportSession(releaseSession);
+
+                if (normalizedEventSession == normalizedReleaseSession)
+                {
+                    result.Confidence += 25;
+                    result.MatchReasons.Add($"Session type matches: {normalizedEventSession}");
+                }
+                else
+                {
+                    // Wrong session type - hard rejection
+                    // FP1 release should NOT match Race event
+                    result.Confidence -= 100;
+                    result.Rejections.Add($"Session mismatch: release is '{normalizedReleaseSession}', event is '{normalizedEventSession}'");
+                    result.IsHardRejection = true;
+                    _logger.LogDebug("[Release Matching] Hard rejection: session mismatch ({ReleaseSession} vs {EventSession}): '{Release}'",
+                        normalizedReleaseSession, normalizedEventSession, release.Title);
+                }
+            }
+            else if (eventSession != null && releaseSession == null)
+            {
+                // Event has a specific session but release doesn't indicate one
+                // This could be acceptable for "Race" events where releases might just say "Grand Prix"
+                // but for practice/qualifying, the release should indicate the session
+                var normalizedEventSession = EventPartDetector.NormalizeMotorsportSession(eventSession);
+                if (normalizedEventSession == "Race")
+                {
+                    // Race events can accept releases without explicit session indicator
+                    result.Confidence += 5;
+                    result.MatchReasons.Add("Assumed Race session (no session indicator in release)");
+                }
+                else
+                {
+                    // For practice/qualifying, we need explicit session in release
+                    result.Confidence -= 30;
+                    result.Rejections.Add($"Event is '{normalizedEventSession}' but release has no session indicator");
+                }
+            }
+        }
+
+        // VALIDATION 7: Word overlap between titles
         var wordOverlap = CalculateWordOverlap(normalizedRelease, normalizedEvent);
         result.Confidence += (int)(wordOverlap * 20);
 
-        // VALIDATION 7: Check for conflicting event identifiers
+        // VALIDATION 8: Check for conflicting event identifiers
         // e.g., searching for "UFC 299" but finding "UFC 298" in the release
         var conflictingEvent = CheckForConflictingEvent(release.Title, evt);
         if (conflictingEvent != null)
