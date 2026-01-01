@@ -19,29 +19,30 @@ public static class SearchNormalizationService
     private static readonly Dictionary<string, string[]> LocationAliases = new(StringComparer.OrdinalIgnoreCase)
     {
         // Formula 1 Grand Prix locations
-        { "Mexico City", new[] { "Mexico" } },
+        // Include both country names AND demonyms (Mexican, Brazilian, etc.) for indexer compatibility
+        { "Mexico City", new[] { "Mexico", "Mexican" } },
         { "Sao Paulo", new[] { "Brazil", "Brazilian", "Interlagos" } },
         { "Las Vegas", new[] { "Vegas" } },
         { "Abu Dhabi", new[] { "AbuDhabi", "Yas Marina", "Fight Island", "UFC Fight Island" } },
-        { "Monte Carlo", new[] { "Monaco" } },
+        { "Monte Carlo", new[] { "Monaco", "Monegasque" } },
         { "Spielberg", new[] { "Austria", "Austrian" } },
-        { "Silverstone", new[] { "British", "Britain", "UK" } },
+        { "Silverstone", new[] { "British", "Britain", "UK", "Great Britain" } },
         { "Monza", new[] { "Italy", "Italian" } },
         { "Spa", new[] { "Belgium", "Belgian", "Spa-Francorchamps" } },
         { "Suzuka", new[] { "Japan", "Japanese" } },
-        { "Singapore", new[] { "Marina Bay" } },
+        { "Singapore", new[] { "Marina Bay", "Singaporean" } },
         { "Melbourne", new[] { "Australia", "Australian" } },
         { "Montreal", new[] { "Canada", "Canadian" } },
-        { "Baku", new[] { "Azerbaijan" } },
+        { "Baku", new[] { "Azerbaijan", "Azerbaijani" } },
         { "Jeddah", new[] { "Saudi Arabia", "Saudi Arabian", "Saudi" } },
         { "Miami", new[] { "Miami Gardens" } },
-        { "Imola", new[] { "Emilia Romagna", "San Marino" } },
+        { "Imola", new[] { "Emilia Romagna", "San Marino", "Emilia-Romagna" } },
         { "Zandvoort", new[] { "Netherlands", "Dutch" } },
         { "Budapest", new[] { "Hungary", "Hungarian", "Hungaroring" } },
-        { "Barcelona", new[] { "Spain", "Spanish", "Catalunya" } },
+        { "Barcelona", new[] { "Spain", "Spanish", "Catalunya", "Catalan" } },
         { "Shanghai", new[] { "China", "Chinese" } },
-        { "Bahrain", new[] { "Sakhir" } },
-        { "Qatar", new[] { "Lusail" } },
+        { "Bahrain", new[] { "Sakhir", "Bahraini" } },
+        { "Qatar", new[] { "Lusail", "Qatari" } },
 
         // MotoGP locations
         { "Mugello", new[] { "Italy", "Italian" } },
@@ -50,9 +51,9 @@ public static class SearchNormalizationService
         { "Assen", new[] { "Netherlands", "Dutch", "TT Assen" } },
         { "Phillip Island", new[] { "Australia", "Australian" } },
         { "Sepang", new[] { "Malaysia", "Malaysian" } },
-        { "Losail", new[] { "Qatar" } },
-        { "Termas de Rio Hondo", new[] { "Argentina", "Argentine" } },
-        { "Circuit of the Americas", new[] { "COTA", "Austin", "Texas" } },
+        { "Losail", new[] { "Qatar", "Qatari" } },
+        { "Termas de Rio Hondo", new[] { "Argentina", "Argentine", "Argentinian" } },
+        { "Circuit of the Americas", new[] { "COTA", "Austin", "Texas", "United States", "American", "USA", "US" } },
 
         // UFC / MMA Fight Night locations
         { "Riyadh", new[] { "Saudi Arabia", "Saudi" } },
@@ -61,6 +62,48 @@ public static class SearchNormalizationService
         { "New York City", new[] { "New York", "NYC", "NY" } },
         { "Los Angeles", new[] { "LA" } },
         { "San Francisco", new[] { "SF" } },
+    };
+
+    /// <summary>
+    /// Country demonym mappings - maps demonyms (adjective forms) to country/location names.
+    /// This allows "Mexican Grand Prix" in a release to match events named "Mexico Grand Prix".
+    /// Used in addition to LocationAliases for bidirectional matching.
+    /// Key: demonym (case-insensitive), Value: list of equivalent location names
+    /// </summary>
+    private static readonly Dictionary<string, string[]> DemonymToLocation = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Americas
+        { "Mexican", new[] { "Mexico", "Mexico City" } },
+        { "Brazilian", new[] { "Brazil", "Sao Paulo", "Interlagos" } },
+        { "Canadian", new[] { "Canada", "Montreal" } },
+        { "American", new[] { "United States", "USA", "US", "Austin", "Las Vegas", "Miami" } },
+        { "Argentine", new[] { "Argentina", "Termas de Rio Hondo" } },
+        { "Argentinian", new[] { "Argentina", "Termas de Rio Hondo" } },
+
+        // Europe
+        { "British", new[] { "Britain", "UK", "Great Britain", "Silverstone" } },
+        { "Italian", new[] { "Italy", "Monza", "Imola", "Mugello" } },
+        { "Spanish", new[] { "Spain", "Barcelona", "Catalunya" } },
+        { "French", new[] { "France", "Le Mans" } },
+        { "German", new[] { "Germany", "Sachsenring", "Hockenheim", "Nurburgring" } },
+        { "Belgian", new[] { "Belgium", "Spa", "Spa-Francorchamps" } },
+        { "Dutch", new[] { "Netherlands", "Zandvoort", "Assen" } },
+        { "Hungarian", new[] { "Hungary", "Budapest", "Hungaroring" } },
+        { "Austrian", new[] { "Austria", "Spielberg" } },
+        { "Monegasque", new[] { "Monaco", "Monte Carlo" } },
+        { "Azerbaijani", new[] { "Azerbaijan", "Baku" } },
+
+        // Asia/Middle East
+        { "Japanese", new[] { "Japan", "Suzuka" } },
+        { "Chinese", new[] { "China", "Shanghai" } },
+        { "Singaporean", new[] { "Singapore", "Marina Bay" } },
+        { "Malaysian", new[] { "Malaysia", "Sepang" } },
+        { "Bahraini", new[] { "Bahrain", "Sakhir" } },
+        { "Qatari", new[] { "Qatar", "Lusail" } },
+        { "Saudi", new[] { "Saudi Arabia", "Jeddah", "Riyadh" } },
+
+        // Oceania
+        { "Australian", new[] { "Australia", "Melbourne", "Phillip Island" } },
     };
 
     /// <summary>
@@ -129,7 +172,7 @@ public static class SearchNormalizationService
     }
 
     /// <summary>
-    /// Generate alternate search queries by expanding location aliases and word substitutions.
+    /// Generate alternate search queries by expanding location aliases, demonyms, and word substitutions.
     /// Returns the original query plus any relevant alternates.
     /// </summary>
     public static List<string> GenerateSearchVariations(string query)
@@ -143,7 +186,7 @@ public static class SearchNormalizationService
             variations.Add(normalized);
         }
 
-        // Check for location aliases
+        // Check for location aliases (location -> aliases)
         foreach (var (location, aliases) in LocationAliases)
         {
             // Check if the query contains this location
@@ -169,6 +212,24 @@ public static class SearchNormalizationService
                     {
                         // Insert at position 1 (after original) - main location is preferred
                         variations.Insert(1, alternate);
+                    }
+                }
+            }
+        }
+
+        // Check for demonym mappings (demonym -> locations)
+        // This handles "Mexican Grand Prix" -> "Mexico Grand Prix" matching
+        foreach (var (demonym, locations) in DemonymToLocation)
+        {
+            if (ContainsWord(normalized, demonym))
+            {
+                // Replace demonym with each equivalent location name
+                foreach (var location in locations)
+                {
+                    var alternate = ReplaceWord(normalized, demonym, location);
+                    if (!variations.Contains(alternate, StringComparer.OrdinalIgnoreCase))
+                    {
+                        variations.Add(alternate);
                     }
                 }
             }
@@ -227,6 +288,7 @@ public static class SearchNormalizationService
     /// <summary>
     /// Check if a release title matches an event title with normalization and alias expansion.
     /// Returns true if either the exact normalized match or any alias variation matches.
+    /// Handles bidirectional matching: "Mexican Grand Prix" release matches "Mexico Grand Prix" event and vice versa.
     /// </summary>
     public static bool IsReleaseMatch(string releaseTitle, string eventTitle)
     {
@@ -240,12 +302,23 @@ public static class SearchNormalizationService
         if (normalizedRelease.Contains(normalizedEvent))
             return true;
 
-        // Check with event title variations (location aliases)
+        // Check with event title variations (location aliases, demonyms)
+        // This handles: event "Mexico Grand Prix" matches release with "Mexican"
         var eventVariations = GenerateSearchVariations(eventTitle);
         foreach (var variation in eventVariations)
         {
             var normalizedVariation = NormalizeForSearch(variation).ToLowerInvariant();
             if (normalizedRelease.Contains(normalizedVariation))
+                return true;
+        }
+
+        // Check with release title variations (reverse direction)
+        // This handles: release "Mexican Grand Prix" matches event "Mexico Grand Prix"
+        var releaseVariations = GenerateSearchVariations(releaseTitle);
+        foreach (var variation in releaseVariations)
+        {
+            var normalizedVariation = NormalizeForSearch(variation).ToLowerInvariant();
+            if (normalizedVariation.Contains(normalizedEvent))
                 return true;
         }
 
