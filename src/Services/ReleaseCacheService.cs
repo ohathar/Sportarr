@@ -165,17 +165,33 @@ public class ReleaseCacheService
 
         _logger.LogDebug("[ReleaseCache] Found {Count} candidate releases for filtering", candidates.Count);
 
-        // Filter using the smart matching logic
+        // Filter using the scoring-based matching logic
         foreach (var cached in candidates)
         {
-            if (IsMatch(cached, eventSearchTerms, evt))
+            var matchScore = CalculateMatchScore(cached, evt);
+            if (matchScore >= MinimumMatchScore)
             {
-                results.Add(ToReleaseSearchResult(cached));
+                var result = ToReleaseSearchResult(cached);
+                result.MatchScore = matchScore;
+                results.Add(result);
             }
         }
 
-        _logger.LogDebug("[ReleaseCache] Matched {Count} releases for event '{Event}'",
-            results.Count, evt.Title);
+        // Sort by match score descending (best matches first)
+        results = results.OrderByDescending(r => r.MatchScore).ToList();
+
+        _logger.LogDebug("[ReleaseCache] Matched {Count} releases for event '{Event}' (min score: {MinScore})",
+            results.Count, evt.Title, MinimumMatchScore);
+
+        // Log top matches with scores for debugging
+        if (results.Count > 0)
+        {
+            var topMatches = results.Take(5);
+            foreach (var match in topMatches)
+            {
+                _logger.LogTrace("[ReleaseCache] Match: '{Title}' (Score: {Score})", match.Title, match.MatchScore);
+            }
+        }
 
         return results;
     }
@@ -488,163 +504,247 @@ public class ReleaseCacheService
         return terms.ToList();
     }
 
-    /// <summary>
-    /// Check if a cached release matches the event search terms.
-    /// STRICT MATCHING: For motorsport/round-based events, requires round number OR specific location to match.
-    /// This prevents "Australian GP" from matching "Belgium GP" releases just because both are F1 2025.
-    /// </summary>
-    private bool IsMatch(ReleaseCache cached, List<string> searchTerms, Event evt)
-    {
-        // STRICT: Year must match if both have year info
-        if (cached.Year.HasValue && cached.Year != evt.EventDate.Year)
-            return false;
+    // Minimum match score threshold for a release to be considered a match
+    // Releases below this score are filtered out from results
+    private const int MinimumMatchScore = 30;
 
-        // STRICT: Sport prefix must match if both have it
+    // Minimum match score for auto-grab (higher threshold for automatic downloads)
+    private const int AutoGrabMatchScore = 50;
+
+    /// <summary>
+    /// Calculate a match score for a cached release against an event.
+    /// Uses a scoring system instead of hard pass/fail:
+    /// - Points awarded for matching: year, sport prefix, round, location, team names, date
+    /// - Higher score = more confident match
+    /// - Returns 0-100 score, higher is better
+    /// </summary>
+    private int CalculateMatchScore(ReleaseCache cached, Event evt)
+    {
+        var score = 0;
         var eventSportPrefix = GetSportPrefix(evt.League?.Name, evt.Sport);
+
+        // === REQUIRED CRITERIA (score 0 if these don't match) ===
+
+        // Year must match - this is required
+        if (cached.Year.HasValue && cached.Year != evt.EventDate.Year)
+            return 0;
+
+        // Sport prefix must match - this is required
         if (!string.IsNullOrEmpty(cached.SportPrefix) && !string.IsNullOrEmpty(eventSportPrefix))
         {
             if (!cached.SportPrefix.Equals(eventSportPrefix, StringComparison.OrdinalIgnoreCase))
-                return false;
+                return 0;
         }
 
-        // For round-based sports (motorsport), require round number match if available
+        // === SCORING CRITERIA ===
+
+        // Base score for matching year (if year info exists)
+        if (cached.Year.HasValue && cached.Year == evt.EventDate.Year)
+            score += 15;
+
+        // Sport prefix match bonus
+        if (!string.IsNullOrEmpty(cached.SportPrefix) && !string.IsNullOrEmpty(eventSportPrefix) &&
+            cached.SportPrefix.Equals(eventSportPrefix, StringComparison.OrdinalIgnoreCase))
+            score += 15;
+
+        // Round number match (for motorsport)
         if (IsRoundBasedSport(eventSportPrefix) && !string.IsNullOrEmpty(evt.Round))
         {
             var eventRound = ExtractRoundNumber(evt.Round);
             if (eventRound.HasValue && cached.RoundNumber.HasValue)
             {
-                // Round numbers must match
-                if (cached.RoundNumber != eventRound)
-                    return false;
+                if (cached.RoundNumber == eventRound)
+                    score += 25; // Strong match
+                else
+                    score -= 10; // Wrong round is a significant penalty
             }
         }
 
-        // For date-based sports (team sports), check date match
-        if (IsDateBasedSport(eventSportPrefix) && cached.Month.HasValue && cached.Day.HasValue)
-        {
-            if (cached.Month != evt.EventDate.Month || cached.Day != evt.EventDate.Day)
-                return false;
-        }
-
-        // STRICT: Location/venue matching for motorsport events
-        // The release must contain the event's location (or alias)
+        // Location matching (for motorsport)
         if (IsMotorsport(eventSportPrefix))
         {
-            if (!HasLocationMatch(cached.Title, evt.Title))
-                return false;
+            var locationScore = GetLocationMatchScore(cached.Title, evt.Title);
+            score += locationScore; // 0-25 points
         }
 
-        // For team sports, check team name match
+        // Team name matching (for team sports)
         if (IsTeamSport(eventSportPrefix))
         {
-            if (!HasTeamMatch(cached.Title, evt))
-                return false;
+            var teamScore = GetTeamMatchScore(cached.Title, evt);
+            score += teamScore; // 0-30 points
         }
 
-        // For fighting sports (UFC, Boxing), check event number or fighters
+        // Date matching (for team sports with specific dates)
+        if (IsDateBasedSport(eventSportPrefix))
+        {
+            var dateScore = GetDateMatchScore(cached, evt);
+            score += dateScore; // 0-20 points
+        }
+
+        // Fighting event matching (UFC number, fighters)
         if (IsFightingSport(eventSportPrefix))
         {
-            if (!HasFightingEventMatch(cached.Title, evt.Title))
-                return false;
+            var fightScore = GetFightingEventMatchScore(cached.Title, evt.Title);
+            score += fightScore; // 0-30 points
         }
 
-        // Passed all strict checks - this is a valid match
-        return true;
+        // Ensure score is within bounds
+        return Math.Clamp(score, 0, 100);
     }
 
     /// <summary>
-    /// Check if the release title contains the event's location (or an alias).
+    /// Check if a cached release matches the event (wrapper for scoring).
+    /// Returns true if the match score meets the minimum threshold.
     /// </summary>
-    private bool HasLocationMatch(string releaseTitle, string eventTitle)
+    private bool IsMatch(ReleaseCache cached, List<string> searchTerms, Event evt)
+    {
+        var score = CalculateMatchScore(cached, evt);
+        return score >= MinimumMatchScore;
+    }
+
+    /// <summary>
+    /// Get location match score (0-25 points).
+    /// Higher score for more specific location matches.
+    /// </summary>
+    private int GetLocationMatchScore(string releaseTitle, string eventTitle)
     {
         var normalizedRelease = NormalizeTitle(releaseTitle);
-
-        // Extract key location terms from event title
         var locationTerms = SearchNormalizationService.ExtractKeyTerms(eventTitle);
+        var matchedTerms = 0;
+        var totalTerms = 0;
 
-        // Check if any location term (or its alias) is in the release
         foreach (var term in locationTerms)
         {
-            // Skip common non-location words
             if (IsCommonWord(term) || term.Length <= 2)
                 continue;
 
+            totalTerms++;
+
             // Direct match
             if (normalizedRelease.Contains(term, StringComparison.OrdinalIgnoreCase))
-                return true;
+            {
+                matchedTerms++;
+                continue;
+            }
 
-            // Check aliases via SearchNormalizationService
+            // Check aliases
             var variations = SearchNormalizationService.GenerateSearchVariations(term);
             foreach (var variation in variations)
             {
                 var normalizedVariation = NormalizeTitle(variation);
                 if (normalizedRelease.Contains(normalizedVariation, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                {
+                    matchedTerms++;
+                    break;
+                }
             }
         }
 
-        return false;
+        if (totalTerms == 0) return 10; // No location terms to match, give partial credit
+
+        // Scale: 0-25 points based on percentage of terms matched
+        var percentage = (double)matchedTerms / totalTerms;
+        return (int)(percentage * 25);
     }
 
     /// <summary>
-    /// Check if release title contains at least one team name from the event.
+    /// Get team match score (0-30 points).
+    /// Higher score for matching both teams.
     /// </summary>
-    private bool HasTeamMatch(string releaseTitle, Event evt)
+    private int GetTeamMatchScore(string releaseTitle, Event evt)
     {
         var normalizedRelease = NormalizeTitle(releaseTitle);
+        var score = 0;
 
-        // Check home team
+        // Check home team (15 points max)
         if (!string.IsNullOrEmpty(evt.HomeTeamName))
         {
             var homeWords = NormalizeTitle(evt.HomeTeamName)
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Where(w => w.Length > 2 && !IsCommonWord(w));
+                .Where(w => w.Length > 2 && !IsCommonWord(w))
+                .ToList();
 
-            if (homeWords.Any(w => normalizedRelease.Contains(w, StringComparison.OrdinalIgnoreCase)))
-                return true;
+            var homeMatches = homeWords.Count(w => normalizedRelease.Contains(w, StringComparison.OrdinalIgnoreCase));
+            if (homeWords.Count > 0)
+                score += (int)(15.0 * homeMatches / homeWords.Count);
         }
 
-        // Check away team
+        // Check away team (15 points max)
         if (!string.IsNullOrEmpty(evt.AwayTeamName))
         {
             var awayWords = NormalizeTitle(evt.AwayTeamName)
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Where(w => w.Length > 2 && !IsCommonWord(w));
+                .Where(w => w.Length > 2 && !IsCommonWord(w))
+                .ToList();
 
-            if (awayWords.Any(w => normalizedRelease.Contains(w, StringComparison.OrdinalIgnoreCase)))
-                return true;
+            var awayMatches = awayWords.Count(w => normalizedRelease.Contains(w, StringComparison.OrdinalIgnoreCase));
+            if (awayWords.Count > 0)
+                score += (int)(15.0 * awayMatches / awayWords.Count);
         }
 
-        return false;
+        return score;
     }
 
     /// <summary>
-    /// Check if release matches a fighting event (UFC number, fight night, etc.).
+    /// Get date match score (0-20 points).
+    /// Points for matching month and day.
     /// </summary>
-    private bool HasFightingEventMatch(string releaseTitle, string eventTitle)
+    private int GetDateMatchScore(ReleaseCache cached, Event evt)
+    {
+        var score = 0;
+
+        // Month match (10 points)
+        if (cached.Month.HasValue && cached.Month == evt.EventDate.Month)
+            score += 10;
+
+        // Day match (10 points)
+        if (cached.Day.HasValue && cached.Day == evt.EventDate.Day)
+            score += 10;
+
+        // If release has date info but it doesn't match, small penalty
+        if (cached.Month.HasValue && cached.Day.HasValue)
+        {
+            if (cached.Month != evt.EventDate.Month || cached.Day != evt.EventDate.Day)
+                score -= 5;
+        }
+
+        return Math.Max(0, score);
+    }
+
+    /// <summary>
+    /// Get fighting event match score (0-30 points).
+    /// Points for matching event number and key terms.
+    /// </summary>
+    private int GetFightingEventMatchScore(string releaseTitle, string eventTitle)
     {
         var normalizedRelease = NormalizeTitle(releaseTitle);
         var normalizedEvent = NormalizeTitle(eventTitle);
+        var score = 0;
 
-        // Check for UFC/event number (e.g., "UFC 299", "UFC Fight Night 240")
+        // Check for UFC/event number match (20 points)
         var eventNumberMatch = Regex.Match(normalizedEvent, @"(?:ufc|bellator|pfl)\s*(?:fight\s*night\s*)?(\d+)", RegexOptions.IgnoreCase);
         if (eventNumberMatch.Success)
         {
             var eventNumber = eventNumberMatch.Groups[1].Value;
-            // Release must contain the same event number
             var releaseNumberMatch = Regex.Match(normalizedRelease, @"(?:ufc|bellator|pfl)\s*(?:fight\s*night\s*)?(\d+)", RegexOptions.IgnoreCase);
             if (releaseNumberMatch.Success && releaseNumberMatch.Groups[1].Value == eventNumber)
-                return true;
+                score += 20;
+            else if (releaseNumberMatch.Success)
+                score -= 10; // Wrong event number is a penalty
         }
 
-        // For boxing/wrestling, check main event names
+        // Key term matching (10 points max)
         var eventWords = normalizedEvent.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(w => w.Length > 3 && !IsCommonWord(w))
             .ToList();
 
-        // Need at least 2 significant words to match
-        var matchCount = eventWords.Count(w => normalizedRelease.Contains(w, StringComparison.OrdinalIgnoreCase));
-        return matchCount >= 2;
+        if (eventWords.Count > 0)
+        {
+            var matchCount = eventWords.Count(w => normalizedRelease.Contains(w, StringComparison.OrdinalIgnoreCase));
+            score += (int)(10.0 * matchCount / eventWords.Count);
+        }
+
+        return Math.Max(0, score);
     }
 
     /// <summary>
