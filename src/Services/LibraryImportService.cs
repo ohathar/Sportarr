@@ -18,6 +18,7 @@ public class LibraryImportService
     private readonly FileNamingService _namingService;
     private readonly EventPartDetector _partDetector;
     private readonly ConfigService _configService;
+    private readonly TheSportsDBClient _theSportsDBClient;
 
     private static readonly string[] VideoExtensions = { ".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".webm", ".flv" };
 
@@ -28,7 +29,8 @@ public class LibraryImportService
         SportsFileNameParser sportsParser,
         FileNamingService namingService,
         EventPartDetector partDetector,
-        ConfigService configService)
+        ConfigService configService,
+        TheSportsDBClient theSportsDBClient)
     {
         _db = db;
         _logger = logger;
@@ -37,6 +39,7 @@ public class LibraryImportService
         _namingService = namingService;
         _partDetector = partDetector;
         _configService = configService;
+        _theSportsDBClient = theSportsDBClient;
     }
 
     /// <summary>
@@ -516,14 +519,12 @@ public class LibraryImportService
                 }
             }
 
-            // Calculate episode number based on date order within the league/season
-            var episodeNumber = await CalculateEpisodeNumberAsync(eventInfo);
-
-            // Update the event's episode number if it's different or not set
-            if (!eventInfo.EpisodeNumber.HasValue || eventInfo.EpisodeNumber.Value != episodeNumber)
+            // Get episode number from API - this is the source of truth for Plex/Jellyfin/Emby metadata
+            var episodeNumber = await GetApiEpisodeNumberAsync(eventInfo);
+            if (episodeNumber != eventInfo.EpisodeNumber)
             {
                 eventInfo.EpisodeNumber = episodeNumber;
-                _logger.LogDebug("[Import] Set episode number to {EpisodeNumber} for event {EventTitle}",
+                _logger.LogDebug("[Import] Set episode number to E{EpisodeNumber} from API for event {EventTitle}",
                     episodeNumber, eventInfo.Title);
             }
 
@@ -1136,60 +1137,57 @@ public class LibraryImportService
     }
 
     /// <summary>
-    /// Calculate episode number for an event based on its date position within its league/season.
-    /// Events are ordered by date, and episode numbers are assigned sequentially (1, 2, 3, ...).
-    /// If the event already has an episode number and it's correct, returns that number.
+    /// Get episode number from the sportarr.net API - this is the source of truth for Plex/Jellyfin/Emby metadata.
+    /// Falls back to existing episode number if API call fails.
     /// </summary>
-    private async Task<int> CalculateEpisodeNumberAsync(Event eventInfo)
+    private async Task<int> GetApiEpisodeNumberAsync(Event eventInfo)
     {
-        // If no league, default to episode 1
+        // If event already has an episode number from API sync, use it
+        if (eventInfo.EpisodeNumber.HasValue && eventInfo.EpisodeNumber.Value > 0)
+        {
+            _logger.LogDebug("[Episode Number] Using existing API episode number E{EpisodeNumber} for event {EventTitle}",
+                eventInfo.EpisodeNumber.Value, eventInfo.Title);
+            return eventInfo.EpisodeNumber.Value;
+        }
+
+        // No episode number - fetch from API
         if (!eventInfo.LeagueId.HasValue)
         {
-            _logger.LogDebug("[Episode Number] No league for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
+            _logger.LogWarning("[Episode Number] No league for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
             return 1;
         }
 
-        // Determine the season for this event
+        var league = await _db.Leagues.FindAsync(eventInfo.LeagueId.Value);
+        if (league == null || string.IsNullOrEmpty(league.ExternalId))
+        {
+            _logger.LogWarning("[Episode Number] League not found or has no ExternalId for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
+            return 1;
+        }
+
         var season = eventInfo.Season ?? eventInfo.SeasonNumber?.ToString() ?? eventInfo.EventDate.Year.ToString();
 
-        // Get all events in this league/season, ordered by date+time
-        // EventDate includes time, so same-day events will be ordered by their actual time
-        // ThenBy ExternalId provides stable, deterministic ordering for events at exact same time
-        var eventsInSeason = await _db.Events
-            .Where(e => e.LeagueId == eventInfo.LeagueId &&
-                       (e.Season == season ||
-                        (e.SeasonNumber.HasValue && e.SeasonNumber.ToString() == season) ||
-                        e.EventDate.Year.ToString() == season))
-            .OrderBy(e => e.EventDate)
-            .ThenBy(e => e.ExternalId) // Stable, unique ID for events at exact same time
-            .Select(e => new { e.Id, e.EventDate, e.ExternalId, e.EpisodeNumber })
-            .ToListAsync();
-
-        if (eventsInSeason.Count == 0)
+        try
         {
-            _logger.LogDebug("[Episode Number] No events found in season {Season} for league {LeagueId}, defaulting to episode 1",
-                season, eventInfo.LeagueId);
+            var apiEpisodeMap = await _theSportsDBClient.GetEpisodeNumbersFromApiAsync(league.ExternalId, season);
+            if (apiEpisodeMap != null && !string.IsNullOrEmpty(eventInfo.ExternalId) &&
+                apiEpisodeMap.TryGetValue(eventInfo.ExternalId, out var apiEpisodeNumber))
+            {
+                _logger.LogInformation("[Episode Number] Got episode E{EpisodeNumber} from API for event {EventTitle}",
+                    apiEpisodeNumber, eventInfo.Title);
+                return apiEpisodeNumber;
+            }
+            else
+            {
+                _logger.LogWarning("[Episode Number] Event {EventTitle} not found in API episode map (ExternalId: {ExternalId}), defaulting to episode 1",
+                    eventInfo.Title, eventInfo.ExternalId);
+                return 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Episode Number] Failed to fetch API episode number for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
             return 1;
         }
-
-        // Find the position of this event in the date-sorted list
-        var position = eventsInSeason.FindIndex(e => e.Id == eventInfo.Id);
-
-        if (position < 0)
-        {
-            // Event not in list yet (shouldn't happen if called after SaveChanges)
-            // Find where it would be inserted based on date+time, using ExternalId as tiebreaker
-            position = eventsInSeason.Count(e => e.EventDate < eventInfo.EventDate ||
-                (e.EventDate == eventInfo.EventDate && string.Compare(e.ExternalId, eventInfo.ExternalId, StringComparison.Ordinal) < 0));
-        }
-
-        // Episode number is 1-indexed position
-        var episodeNumber = position + 1;
-
-        _logger.LogDebug("[Episode Number] Event {EventTitle} is episode {EpisodeNumber} of {TotalEvents} in season {Season}",
-            eventInfo.Title, episodeNumber, eventsInSeason.Count, season);
-
-        return episodeNumber;
     }
 
     /// <summary>

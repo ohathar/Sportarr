@@ -18,6 +18,7 @@ public class PackImportService
     private readonly ConfigService _configService;
     private readonly DiskSpaceService _diskSpaceService;
     private readonly ReleaseEvaluator _releaseEvaluator;
+    private readonly TheSportsDBClient _theSportsDBClient;
     private readonly ILogger<PackImportService> _logger;
 
     // Supported video file extensions
@@ -30,6 +31,7 @@ public class PackImportService
         ConfigService configService,
         DiskSpaceService diskSpaceService,
         ReleaseEvaluator releaseEvaluator,
+        TheSportsDBClient theSportsDBClient,
         ILogger<PackImportService> logger)
     {
         _db = db;
@@ -38,6 +40,7 @@ public class PackImportService
         _configService = configService;
         _diskSpaceService = diskSpaceService;
         _releaseEvaluator = releaseEvaluator;
+        _theSportsDBClient = theSportsDBClient;
         _logger = logger;
     }
 
@@ -826,7 +829,15 @@ public class PackImportService
         string filename;
         if (settings.RenameEvents)
         {
-            var episodeNumber = await CalculateEpisodeNumberAsync(eventInfo);
+            // Get episode number from API - this is the source of truth for Plex/Jellyfin/Emby metadata
+            var episodeNumber = await GetApiEpisodeNumberAsync(eventInfo);
+            if (episodeNumber != eventInfo.EpisodeNumber)
+            {
+                eventInfo.EpisodeNumber = episodeNumber;
+                _logger.LogDebug("[Import] Set episode number to E{EpisodeNumber} from API for event {EventTitle}",
+                    episodeNumber, eventInfo.Title);
+            }
+
             var tokens = new FileNamingTokens
             {
                 EventTitle = eventInfo.Title,
@@ -869,23 +880,58 @@ public class PackImportService
         return destinationPath;
     }
 
-    private async Task<int> CalculateEpisodeNumberAsync(Event eventInfo)
+    /// <summary>
+    /// Get episode number from the sportarr.net API - this is the source of truth for Plex/Jellyfin/Emby metadata.
+    /// Falls back to existing episode number if API call fails.
+    /// </summary>
+    private async Task<int> GetApiEpisodeNumberAsync(Event eventInfo)
     {
-        if (!eventInfo.LeagueId.HasValue) return 1;
+        // If event already has an episode number from API sync, use it
+        if (eventInfo.EpisodeNumber.HasValue && eventInfo.EpisodeNumber.Value > 0)
+        {
+            _logger.LogDebug("[Episode Number] Using existing API episode number E{EpisodeNumber} for event {EventTitle}",
+                eventInfo.EpisodeNumber.Value, eventInfo.Title);
+            return eventInfo.EpisodeNumber.Value;
+        }
+
+        // No episode number - fetch from API
+        if (!eventInfo.LeagueId.HasValue)
+        {
+            _logger.LogWarning("[Episode Number] No league for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
+            return 1;
+        }
+
+        var league = await _db.Leagues.FindAsync(eventInfo.LeagueId.Value);
+        if (league == null || string.IsNullOrEmpty(league.ExternalId))
+        {
+            _logger.LogWarning("[Episode Number] League not found or has no ExternalId for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
+            return 1;
+        }
 
         var season = eventInfo.Season ?? eventInfo.SeasonNumber?.ToString() ?? eventInfo.EventDate.Year.ToString();
-        var eventsInSeason = await _db.Events
-            .Where(e => e.LeagueId == eventInfo.LeagueId &&
-                       (e.Season == season ||
-                        (e.SeasonNumber.HasValue && e.SeasonNumber.ToString() == season) ||
-                        e.EventDate.Year.ToString() == season))
-            .OrderBy(e => e.EventDate)
-            .ThenBy(e => e.ExternalId)
-            .Select(e => e.Id)
-            .ToListAsync();
 
-        var position = eventsInSeason.IndexOf(eventInfo.Id);
-        return position >= 0 ? position + 1 : eventsInSeason.Count + 1;
+        try
+        {
+            var apiEpisodeMap = await _theSportsDBClient.GetEpisodeNumbersFromApiAsync(league.ExternalId, season);
+            if (apiEpisodeMap != null && !string.IsNullOrEmpty(eventInfo.ExternalId) &&
+                apiEpisodeMap.TryGetValue(eventInfo.ExternalId, out var apiEpisodeNumber))
+            {
+                _logger.LogInformation("[Episode Number] Got episode E{EpisodeNumber} from API for event {EventTitle}",
+                    apiEpisodeNumber, eventInfo.Title);
+                return apiEpisodeNumber;
+            }
+            else
+            {
+                _logger.LogWarning("[Episode Number] Event {EventTitle} not found in API episode map (ExternalId: {ExternalId}), defaulting to episode 1",
+                    eventInfo.Title, eventInfo.ExternalId);
+                return 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Episode Number] Failed to fetch API episode number for event {EventTitle}, defaulting to episode 1", eventInfo.Title);
+            return 1;
+        }
     }
 
     private string GetBestRootFolder(MediaManagementSettings settings, long fileSize)
