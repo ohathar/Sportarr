@@ -433,11 +433,8 @@ public class TheSportsDBClient
             // Note: TVSchedule doesn't include sport information in the response
             // Filtering by sport would require looking up each event individually
             // For now, return all TV schedules for the date
-            // TODO: Consider adding sport filtering if TheSportsDB API supports it
-            if (!string.IsNullOrEmpty(sport))
-            {
-                _logger.LogWarning("[TheSportsDB] Sport filtering requested but TVSchedule doesn't include sport info. Returning all schedules for date.");
-            }
+            // This is expected behavior - sport parameter is accepted for API compatibility
+            // but filtering happens at a higher level based on returned event data
 
             return result?.Data?.TVSchedule;
         }

@@ -272,6 +272,7 @@ builder.Services.AddScoped<Sportarr.Api.Services.SessionService>();
 builder.Services.AddScoped<Sportarr.Api.Services.IndexerStatusService>(); // Sonarr-style indexer health tracking and backoff
 builder.Services.AddScoped<Sportarr.Api.Services.IndexerSearchService>();
 builder.Services.AddScoped<Sportarr.Api.Services.ReleaseMatchingService>(); // Sonarr-style release validation to prevent downloading wrong content
+builder.Services.AddSingleton<Sportarr.Api.Services.ReleaseMatchScorer>(); // Match scoring for event-to-release matching
 builder.Services.AddSingleton<Sportarr.Api.Services.SearchQueueService>(); // Queue for parallel search execution
 builder.Services.AddScoped<Sportarr.Api.Services.AutomaticSearchService>();
 builder.Services.AddScoped<Sportarr.Api.Services.DelayProfileService>();
@@ -8449,6 +8450,7 @@ app.MapPost("/api/event/{eventId:int}/search", async (
     Sportarr.Api.Services.EventQueryService eventQueryService,
     Sportarr.Api.Services.ConfigService configService,
     Sportarr.Api.Services.ReleaseMatchingService releaseMatchingService,
+    Sportarr.Api.Services.ReleaseMatchScorer releaseMatchScorer,
     ILogger<Program> logger) =>
 {
     // Load config for multi-part episode setting
@@ -8630,6 +8632,38 @@ app.MapPost("/api/event/{eventId:int}/search", async (
         logger.LogInformation("[SEARCH] {Count} releases rejected by date/event validation", dateRejectionCount);
     }
 
+    // MATCH SCORING: Calculate how well each release matches the event
+    // This filters out releases for wrong games (e.g., searching for Chiefs vs Broncos but getting Lions vs Vikings)
+    var matchScoreRejectionCount = 0;
+    foreach (var result in allResults)
+    {
+        result.MatchScore = releaseMatchScorer.CalculateMatchScore(result.Title, evt);
+
+        // If match score is below threshold, mark as rejected
+        if (result.MatchScore < Sportarr.Api.Services.ReleaseMatchScorer.MinimumMatchScore)
+        {
+            result.Approved = false;
+            result.Rejections.Add($"Match score too low ({result.MatchScore}/100) - release may be for a different event");
+            matchScoreRejectionCount++;
+        }
+    }
+
+    if (matchScoreRejectionCount > 0)
+    {
+        logger.LogInformation("[SEARCH] {Count} releases have low match scores (below {Threshold})",
+            matchScoreRejectionCount, Sportarr.Api.Services.ReleaseMatchScorer.MinimumMatchScore);
+    }
+
+    // Log match score distribution for debugging
+    var approvedWithScores = allResults.Where(r => r.Approved).ToList();
+    if (approvedWithScores.Any())
+    {
+        var avgScore = approvedWithScores.Average(r => r.MatchScore);
+        var maxScore = approvedWithScores.Max(r => r.MatchScore);
+        logger.LogInformation("[SEARCH] Match scores: {Approved} approved releases, avg={Avg:F0}, max={Max}",
+            approvedWithScores.Count, avgScore, maxScore);
+    }
+
     // Check blocklist status for each result (Sonarr-style: show blocked but mark them)
     var blocklistHashes = await db.Blocklist
         .Select(b => new { b.TorrentInfoHash, b.Message })
@@ -8646,12 +8680,13 @@ app.MapPost("/api/event/{eventId:int}/search", async (
         }
     }
 
-    // Sort results: by score (descending), then by part relevance for multi-part episodes
+    // Sort results: by match score (best matches first), then quality score
     // Rejected/blocklisted items appear at the bottom but are still visible
     var sortedResults = allResults
         .OrderBy(r => !r.Approved) // Approved first, rejected last
         .ThenBy(r => r.IsBlocklisted) // Non-blocklisted before blocklisted
-        .ThenByDescending(r => r.Score)
+        .ThenByDescending(r => r.MatchScore) // Best match scores first
+        .ThenByDescending(r => r.Score) // Then by quality/CF score
         .ThenByDescending(r => GetPartRelevanceScore(r.Title, part))
         .ToList();
 
