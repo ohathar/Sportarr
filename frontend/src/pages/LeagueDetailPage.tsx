@@ -225,9 +225,8 @@ export default function LeagueDetailPage() {
   const editModalDataRef = useRef<{ league: ModalLeagueData; leagueId: number } | null>(null);
   const deleteModalDataRef = useRef<{ name: string; eventCount: number } | null>(null);
 
-  // Track which seasons are expanded (default: current year)
-  const currentYear = new Date().getFullYear().toString();
-  const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set([currentYear]));
+  // Track which seasons are expanded (default: none - user manually expands)
+  const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set());
   const [dvrChannelSearch, setDvrChannelSearch] = useState('');
 
   // Fetch config to check if multi-part episodes are enabled
