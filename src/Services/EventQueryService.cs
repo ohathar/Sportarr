@@ -43,36 +43,44 @@ public class EventQueryService
         var queries = new List<string>();
         var leagueName = evt.League?.Name;
 
-        _logger.LogDebug("[EventQuery] Building BROAD query for {Title} ({Sport})", evt.Title, sport);
+        _logger.LogDebug("[EventQuery] Building BROAD query for '{Title}' | Sport: '{Sport}' | League: '{League}'",
+            evt.Title, sport, leagueName ?? "(none)");
 
         string primaryQuery;
+        string queryType;
 
-        // Check if this is a motorsport event
-        if (IsMotorsport(sport, leagueName))
+        // Check if this is a motorsport event (checks sport, league, AND event title)
+        if (IsMotorsport(sport, leagueName, evt.Title))
         {
             // Motorsport: Just "Formula1.2025" - local filtering handles location/session
             primaryQuery = BuildBroadMotorsportQuery(evt, leagueName);
+            queryType = "Motorsport";
         }
         else if (IsFightingSport(sport, leagueName))
         {
             // Fighting: "UFC.299" or "UFC.Fight.Night.240" - event number is specific enough
             primaryQuery = BuildFightingQuery(evt, leagueName);
+            queryType = "Fighting";
         }
         else if (IsTeamSport(sport, leagueName))
         {
             // Team sports: "NFL.2025" or "NFL.2025.Week15" - local filtering handles teams
             primaryQuery = BuildBroadTeamSportQuery(evt, leagueName);
+            queryType = "TeamSport";
         }
         else
         {
             // Fallback: use normalized event title
             primaryQuery = NormalizeEventTitle(evt.Title);
+            queryType = "Fallback";
+            _logger.LogWarning("[EventQuery] Using fallback query for '{Title}' - Sport '{Sport}' / League '{League}' not recognized as motorsport/fighting/team sport",
+                evt.Title, sport, leagueName ?? "(none)");
         }
 
         queries.Add(primaryQuery);
 
-        _logger.LogInformation("[EventQuery] Built 1 broad query: '{Query}' (local filtering will handle specifics)",
-            primaryQuery);
+        _logger.LogInformation("[EventQuery] Built {QueryType} query: '{Query}' for '{EventTitle}'",
+            queryType, primaryQuery, evt.Title);
 
         return queries;
     }
@@ -283,16 +291,30 @@ public class EventQueryService
     }
 
     /// <summary>
-    /// Normalize team name for search queries.
-    /// Removes common suffixes and standardizes format.
+    /// Check if this is a motorsport event.
+    /// Checks sport, league name, and event title for motorsport indicators.
     /// </summary>
-    private bool IsMotorsport(string sport, string? leagueName)
+    private bool IsMotorsport(string sport, string? leagueName, string? eventTitle = null)
     {
-        var motorsportKeywords = new[] { "motorsport", "racing", "formula", "nascar", "indycar", "motogp", "f1" };
+        var motorsportKeywords = new[] { "motorsport", "racing", "formula", "nascar", "indycar", "motogp", "f1", "grand prix", "gp" };
         var sportLower = sport.ToLowerInvariant();
         var leagueLower = leagueName?.ToLowerInvariant() ?? "";
+        var titleLower = eventTitle?.ToLowerInvariant() ?? "";
 
-        return motorsportKeywords.Any(k => sportLower.Contains(k) || leagueLower.Contains(k));
+        // Check sport and league first
+        if (motorsportKeywords.Any(k => sportLower.Contains(k) || leagueLower.Contains(k)))
+            return true;
+
+        // Also check event title as fallback - catches "Qatar Grand Prix" even if sport/league is generic
+        if (!string.IsNullOrEmpty(titleLower))
+        {
+            // Grand Prix is a strong indicator of motorsport
+            if (titleLower.Contains("grand prix") || titleLower.Contains("gp sprint") ||
+                titleLower.Contains("gp qualifying") || titleLower.Contains("gp race"))
+                return true;
+        }
+
+        return false;
     }
 
     private string GetTeamSportLeaguePrefix(string? leagueName)
