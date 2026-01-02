@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 import { Dialog, Transition } from '@headlessui/react';
 import {
@@ -112,6 +112,8 @@ export default function ManualSearchModal({
   const [hasExistingFile, setHasExistingFile] = useState(false);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+  const [hideRejected, setHideRejected] = useState(true); // Default: hide rejected results
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
 
   // History state
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -126,12 +128,30 @@ export default function ManualSearchModal({
       setDownloadingIndex(null);
       setBlocklistConfirm(null);
       setActiveTab('search');
+      setShowFilters(false);
       checkExistingFileAndQueue();
       loadHistory();
       // Auto-start search when modal opens (like Sonarr/Radarr)
       handleSearchOnOpen();
     }
   }, [isOpen, eventId, part]);
+
+  // Close filter dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target as Node)) {
+        setShowFilters(false);
+      }
+    };
+
+    if (showFilters) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showFilters]);
 
   // Separate function for auto-search to avoid dependency issues
   const handleSearchOnOpen = async () => {
@@ -502,8 +522,27 @@ export default function ManualSearchModal({
     return count;
   };
 
+  // Filter results based on hideRejected toggle
+  const filteredResults = useMemo(() => {
+    if (!hideRejected) return searchResults;
+
+    return searchResults.filter(result => {
+      // Check for any rejections
+      const rejections = getAllRejections(result);
+      if (rejections.length > 0) return false;
+      if (result.isBlocklisted) return false;
+      return true;
+    });
+  }, [searchResults, hideRejected]);
+
+  // Count of hidden rejected results
+  const hiddenRejectedCount = useMemo(() => {
+    if (!hideRejected) return 0;
+    return searchResults.length - filteredResults.length;
+  }, [searchResults, filteredResults, hideRejected]);
+
   const sortedResults = useMemo(() => {
-    return [...searchResults].sort((a, b) => {
+    return [...filteredResults].sort((a, b) => {
       let comparison = 0;
 
       switch (sortField) {
@@ -584,7 +623,7 @@ export default function ManualSearchModal({
       // For descending, we want b < a (higher values first), so we negate
       return sortDirection === 'desc' ? -comparison : comparison;
     });
-  }, [searchResults, sortField, sortDirection, existingFiles, part]);
+  }, [filteredResults, sortField, sortDirection, existingFiles, part]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -706,13 +745,42 @@ export default function ManualSearchModal({
                         Search indexers for available releases
                       </p>
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setShowFilters(!showFilters)}
-                          className="px-2 md:px-3 py-1 md:py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded transition-colors flex items-center gap-1 md:gap-1.5 text-xs md:text-sm"
-                        >
-                          <FunnelIcon className="w-3.5 h-3.5 md:w-4 md:h-4" />
-                          Filter
-                        </button>
+                        <div className="relative" ref={filterDropdownRef}>
+                          <button
+                            onClick={() => setShowFilters(!showFilters)}
+                            className={`px-2 md:px-3 py-1 md:py-1.5 ${hideRejected ? 'bg-green-800 hover:bg-green-700' : 'bg-gray-800 hover:bg-gray-700'} text-gray-300 rounded transition-colors flex items-center gap-1 md:gap-1.5 text-xs md:text-sm`}
+                          >
+                            <FunnelIcon className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                            Filter
+                            {hideRejected && <span className="text-green-400 text-[10px]">•</span>}
+                          </button>
+                          {/* Filter Dropdown */}
+                          {showFilters && (
+                            <div className="absolute top-full left-0 mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
+                              <div className="p-2">
+                                <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-800 p-2 rounded transition-colors">
+                                  <input
+                                    type="checkbox"
+                                    checked={hideRejected}
+                                    onChange={(e) => setHideRejected(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500 focus:ring-offset-gray-900"
+                                  />
+                                  <div className="flex flex-col">
+                                    <span className="text-white text-sm">Hide Rejected</span>
+                                    <span className="text-gray-500 text-xs">Hide results with rejections or blocklist</span>
+                                  </div>
+                                </label>
+                              </div>
+                              {hiddenRejectedCount > 0 && (
+                                <div className="px-3 py-2 border-t border-gray-700">
+                                  <span className="text-gray-500 text-xs">
+                                    {hiddenRejectedCount} rejected result{hiddenRejectedCount !== 1 ? 's' : ''} hidden
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                         <button
                           onClick={handleSearchPack}
                           disabled={isSearching || isSearchingPack}
@@ -762,8 +830,13 @@ export default function ManualSearchModal({
 
                     {/* Results Count */}
                     {searchResults.length > 0 && (
-                      <div className="px-6 py-2 text-gray-400 text-sm">
-                        Found {searchResults.length} releases
+                      <div className="px-6 py-2 text-gray-400 text-sm flex items-center gap-2">
+                        <span>Found {sortedResults.length} releases</span>
+                        {hiddenRejectedCount > 0 && (
+                          <span className="text-gray-500 text-xs">
+                            ({hiddenRejectedCount} rejected hidden)
+                          </span>
+                        )}
                       </div>
                     )}
 
@@ -869,11 +942,14 @@ export default function ManualSearchModal({
                                 </div>
                               </th>
                               <th
-                                className="text-center py-1.5 px-2 text-gray-400 font-medium w-[24px] cursor-pointer hover:text-white transition-colors select-none"
+                                className="text-center py-1.5 px-2 text-gray-400 font-medium w-[50px] cursor-pointer hover:text-white transition-colors select-none"
                                 onClick={() => handleSort('warnings')}
                                 title="Sort by warnings/rejections"
                               >
-                                {sortField === 'warnings' && (sortDirection === 'desc' ? <ChevronDownIcon className="w-3 h-3" /> : <ChevronUpIcon className="w-3 h-3" />)}
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <span>Act</span>
+                                  {sortField === 'warnings' && (sortDirection === 'desc' ? <ChevronDownIcon className="w-3 h-3" /> : <ChevronUpIcon className="w-3 h-3" />)}
+                                </div>
                               </th>
                               <th className="text-right py-1.5 px-2 text-gray-400 font-medium w-[70px]">Actions</th>
                             </tr>
