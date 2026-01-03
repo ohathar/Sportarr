@@ -20,6 +20,7 @@ public class AutomaticSearchService
     private readonly ConfigService _configService;
     private readonly ReleaseCacheService _releaseCacheService;
     private readonly ReleaseMatchScorer _releaseMatchScorer;
+    private readonly SearchResultCache _searchResultCache;
     private readonly ILogger<AutomaticSearchService> _logger;
 
     // Concurrent event search limiting (Sonarr-style)
@@ -39,6 +40,7 @@ public class AutomaticSearchService
         ConfigService configService,
         ReleaseCacheService releaseCacheService,
         ReleaseMatchScorer releaseMatchScorer,
+        SearchResultCache searchResultCache,
         ILogger<AutomaticSearchService> logger)
     {
         _db = db;
@@ -50,6 +52,7 @@ public class AutomaticSearchService
         _configService = configService;
         _releaseCacheService = releaseCacheService;
         _releaseMatchScorer = releaseMatchScorer;
+        _searchResultCache = searchResultCache;
         _logger = logger;
     }
 
@@ -186,10 +189,6 @@ public class AutomaticSearchService
             await _db.Entry(evt).Reference(e => e.AwayTeam).LoadAsync();
             await _db.Entry(evt).Reference(e => e.League).LoadAsync();
 
-            // Perform the search (no caching - matches manual search behavior)
-            // Indexers return different results for different queries, so caching is not reliable
-            var allReleases = new List<ReleaseSearchResult>();
-
             // Build queries WITH the part included for accurate results
             // Indexers return different results: "UFC 299" vs "UFC 299 Prelims"
             var queries = _eventQueryService.BuildEventQueries(evt, part);
@@ -197,48 +196,79 @@ public class AutomaticSearchService
             _logger.LogInformation("[Automatic Search] Built {Count} prioritized queries for {Sport}{PartInfo}",
                 queries.Count, evt.Sport, part != null ? $" (Part: {part})" : "");
 
-            // Intelligent fallback search - try primary query first, exit early if no results
-            int queriesAttempted = 0;
-            int consecutiveEmptyResults = 0;
-            const int MinimumResults = 3;
-            const int MaxConsecutiveEmpty = 2;
+            // Check cache for primary query first (avoids redundant API calls)
+            // Multiple events often share the same primary query (e.g., "Formula1.2025" for all F1 races)
+            var allReleases = new List<ReleaseSearchResult>();
+            var primaryQuery = queries.FirstOrDefault();
+            bool usedCache = false;
 
-            foreach (var query in queries)
+            if (!string.IsNullOrEmpty(primaryQuery))
             {
-                queriesAttempted++;
-                _logger.LogInformation("[Automatic Search] Trying query {Attempt}/{Total}: '{Query}'",
-                    queriesAttempted, queries.Count, query);
-
-                // Pass part to indexer for proper filtering
-                var releases = await _indexerSearchService.SearchAllIndexersAsync(query, maxResultsPerIndexer: 100, qualityProfileId, part, evt.Sport, config.EnableMultiPartEpisodes, evt.Title);
-
-                if (releases.Count == 0)
+                var cachedResults = _searchResultCache.TryGetCached(primaryQuery, config.SearchCacheDuration);
+                if (cachedResults != null)
                 {
-                    consecutiveEmptyResults++;
-                    _logger.LogInformation("[Automatic Search] No results for query '{Query}' ({Empty}/{MaxEmpty} consecutive empty)",
-                        query, consecutiveEmptyResults, MaxConsecutiveEmpty);
+                    allReleases = _searchResultCache.ToSearchResults(cachedResults);
+                    usedCache = true;
+                    _logger.LogInformation("[Automatic Search] Using cached results for query '{Query}' ({Count} releases, cache valid for {Duration}s)",
+                        primaryQuery, allReleases.Count, config.SearchCacheDuration);
+                }
+            }
 
-                    if (consecutiveEmptyResults >= MaxConsecutiveEmpty)
+            // If no cache hit, perform live search
+            if (!usedCache)
+            {
+                // Intelligent fallback search - try primary query first, exit early if no results
+                int queriesAttempted = 0;
+                int consecutiveEmptyResults = 0;
+                const int MinimumResults = 3;
+                const int MaxConsecutiveEmpty = 2;
+
+                foreach (var query in queries)
+                {
+                    queriesAttempted++;
+                    _logger.LogInformation("[Automatic Search] Trying query {Attempt}/{Total}: '{Query}'",
+                        queriesAttempted, queries.Count, query);
+
+                    // Pass part to indexer for proper filtering
+                    var releases = await _indexerSearchService.SearchAllIndexersAsync(query, maxResultsPerIndexer: 100, qualityProfileId, part, evt.Sport, config.EnableMultiPartEpisodes, evt.Title);
+
+                    if (releases.Count == 0)
                     {
-                        _logger.LogInformation("[Automatic Search] Stopping search - {Empty} consecutive empty results (event likely not released yet)",
-                            consecutiveEmptyResults);
-                        break;
+                        consecutiveEmptyResults++;
+                        _logger.LogInformation("[Automatic Search] No results for query '{Query}' ({Empty}/{MaxEmpty} consecutive empty)",
+                            query, consecutiveEmptyResults, MaxConsecutiveEmpty);
+
+                        if (consecutiveEmptyResults >= MaxConsecutiveEmpty)
+                        {
+                            _logger.LogInformation("[Automatic Search] Stopping search - {Empty} consecutive empty results (event likely not released yet)",
+                                consecutiveEmptyResults);
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        consecutiveEmptyResults = 0;
+                        allReleases.AddRange(releases);
+
+                        if (allReleases.Count >= MinimumResults)
+                        {
+                            _logger.LogInformation("[Automatic Search] Found {Count} results - skipping remaining {Remaining} fallback queries",
+                                allReleases.Count, queries.Count - queriesAttempted);
+                            break;
+                        }
+
+                        _logger.LogInformation("[Automatic Search] Found {Count} results so far (need {Min} minimum)",
+                            allReleases.Count, MinimumResults);
                     }
                 }
-                else
+
+                // Store results in cache for subsequent searches using the same query
+                // This prevents redundant indexer queries when searching multiple events (e.g., F1 races)
+                if (allReleases.Any() && !string.IsNullOrEmpty(primaryQuery))
                 {
-                    consecutiveEmptyResults = 0;
-                    allReleases.AddRange(releases);
-
-                    if (allReleases.Count >= MinimumResults)
-                    {
-                        _logger.LogInformation("[Automatic Search] Found {Count} results - skipping remaining {Remaining} fallback queries",
-                            allReleases.Count, queries.Count - queriesAttempted);
-                        break;
-                    }
-
-                    _logger.LogInformation("[Automatic Search] Found {Count} results so far (need {Min} minimum)",
-                        allReleases.Count, MinimumResults);
+                    _searchResultCache.Store(primaryQuery, allReleases);
+                    _logger.LogDebug("[Automatic Search] Cached {Count} results for query '{Query}'",
+                        allReleases.Count, primaryQuery);
                 }
             }
 
