@@ -232,7 +232,7 @@ builder.Services.AddHttpClient("StreamProxy")
     {
         // Allow redirects for stream URLs
         AllowAutoRedirect = true,
-        MaxAutomaticRedirections = 5,
+        MaxAutomaticRedirections = 10, // Increased for IPTV providers that chain redirects
         // Disable connection pooling for streaming to avoid stale connections
         PooledConnectionLifetime = TimeSpan.FromMinutes(1),
         PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
@@ -241,6 +241,24 @@ builder.Services.AddHttpClient("StreamProxy")
     {
         // Longer timeout for stream connections
         client.Timeout = TimeSpan.FromMinutes(5);
+    });
+
+// Configure HttpClient for IPTV services (source syncing, channel testing, API calls)
+// This client properly follows HTTP 302 redirects which many IPTV providers use
+builder.Services.AddHttpClient("IptvClient")
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        // CRITICAL: Allow redirects - many IPTV providers (especially Xtream Codes) use 302 redirects
+        AllowAutoRedirect = true,
+        MaxAutomaticRedirections = 10,
+        // DNS refresh for dynamic IPTV server IPs
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1)
+    })
+    .ConfigureHttpClient(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(30);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("VLC/3.0.18 LibVLC/3.0.18");
     });
 
 builder.Services.AddControllers(); // Add MVC controllers for AuthenticationController

@@ -15,7 +15,7 @@ namespace Sportarr.Api.Services;
 public class M3uParserService
 {
     private readonly ILogger<M3uParserService> _logger;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     // Common sports channel keywords for auto-detection
     private static readonly string[] SportsKeywords = new[]
@@ -176,11 +176,16 @@ public class M3uParserService
         @"tvg-chno\s*=\s*[""']?(\d+)[""']?",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    public M3uParserService(ILogger<M3uParserService> logger, HttpClient httpClient)
+    public M3uParserService(ILogger<M3uParserService> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
     }
+
+    /// <summary>
+    /// Get the HttpClient configured for IPTV operations with redirect support
+    /// </summary>
+    private HttpClient GetHttpClient() => _httpClientFactory.CreateClient("IptvClient");
 
     /// <summary>
     /// Fetch and parse an M3U playlist from a URL
@@ -203,7 +208,7 @@ public class M3uParserService
                 request.Headers.UserAgent.ParseAdd("VLC/3.0.18 LibVLC/3.0.18");
             }
 
-            var response = await _httpClient.SendAsync(request);
+            var response = await GetHttpClient().SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
@@ -500,7 +505,7 @@ public class M3uParserService
                 request.Headers.UserAgent.ParseAdd("VLC/3.0.18 LibVLC/3.0.18");
             }
 
-            var response = await _httpClient.SendAsync(request);
+            var response = await GetHttpClient().SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();

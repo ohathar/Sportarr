@@ -18,7 +18,7 @@ namespace Sportarr.Api.Services;
 public class XtreamCodesClient
 {
     private readonly ILogger<XtreamCodesClient> _logger;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     // Common sports category keywords for auto-detection
     private static readonly string[] SportsCategoryKeywords = new[]
@@ -28,11 +28,16 @@ public class XtreamCodesClient
         "nfl", "nba", "mlb", "nhl", "mls", "motorsport", "f1", "racing"
     };
 
-    public XtreamCodesClient(ILogger<XtreamCodesClient> logger, HttpClient httpClient)
+    public XtreamCodesClient(ILogger<XtreamCodesClient> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
     }
+
+    /// <summary>
+    /// Get the HttpClient configured for IPTV operations with redirect support
+    /// </summary>
+    private HttpClient GetHttpClient() => _httpClientFactory.CreateClient("IptvClient");
 
     /// <summary>
     /// Authenticate with Xtream Codes server
@@ -44,7 +49,7 @@ public class XtreamCodesClient
             var url = BuildApiUrl(serverUrl, username, password);
             _logger.LogDebug("[Xtream] Authenticating with server: {Url}", serverUrl);
 
-            var response = await _httpClient.GetAsync(url);
+            var response = await GetHttpClient().GetAsync(url);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
@@ -75,7 +80,7 @@ public class XtreamCodesClient
             var url = BuildApiUrl(serverUrl, username, password, "get_live_categories");
             _logger.LogDebug("[Xtream] Fetching live categories");
 
-            var response = await _httpClient.GetAsync(url);
+            var response = await GetHttpClient().GetAsync(url);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
@@ -112,7 +117,7 @@ public class XtreamCodesClient
             _logger.LogDebug("[Xtream] Fetching live streams{Category}",
                 categoryId != null ? $" for category {categoryId}" : "");
 
-            var response = await _httpClient.GetAsync(url);
+            var response = await GetHttpClient().GetAsync(url);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
@@ -142,7 +147,7 @@ public class XtreamCodesClient
             var action = $"get_short_epg&stream_id={streamId}";
             var url = BuildApiUrl(serverUrl, username, password, action);
 
-            var response = await _httpClient.GetAsync(url);
+            var response = await GetHttpClient().GetAsync(url);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();

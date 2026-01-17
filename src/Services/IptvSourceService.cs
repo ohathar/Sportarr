@@ -14,20 +14,20 @@ public class IptvSourceService
     private readonly SportarrDbContext _db;
     private readonly M3uParserService _m3uParser;
     private readonly XtreamCodesClient _xtreamClient;
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public IptvSourceService(
         ILogger<IptvSourceService> logger,
         SportarrDbContext db,
         M3uParserService m3uParser,
         XtreamCodesClient xtreamClient,
-        HttpClient httpClient)
+        IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _db = db;
         _m3uParser = m3uParser;
         _xtreamClient = xtreamClient;
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
     }
 
     // ============================================================================
@@ -311,21 +311,21 @@ public class IptvSourceService
         {
             _logger.LogDebug("[IPTV] Testing channel: {Name} ({Url})", channel.Name, channel.StreamUrl);
 
+            // Use IptvClient which has AllowAutoRedirect=true for following 302 redirects
+            var httpClient = _httpClientFactory.CreateClient("IptvClient");
+
             var request = new HttpRequestMessage(HttpMethod.Head, channel.StreamUrl);
 
-            // Add user agent if source has one
+            // Add user agent if source has one (override the default)
             if (!string.IsNullOrEmpty(channel.Source?.UserAgent))
             {
+                request.Headers.UserAgent.Clear();
                 request.Headers.UserAgent.ParseAdd(channel.Source.UserAgent);
-            }
-            else
-            {
-                request.Headers.UserAgent.ParseAdd("VLC/3.0.18 LibVLC/3.0.18");
             }
 
             // Use a short timeout for testing
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var response = await _httpClient.SendAsync(request, cts.Token);
+            var response = await httpClient.SendAsync(request, cts.Token);
 
             if (response.IsSuccessStatusCode)
             {
