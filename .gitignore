@@ -196,3 +196,6 @@ src/nul
 # Static assets like icons should remain, but compiled JS/CSS should not
 src/wwwroot/assets/
 src/wwwroot/index.html
+
+# GSD planning docs (kept local — not committed per project preference)
+.planning/
