@@ -15,6 +15,7 @@ namespace Sportarr.Providers
     using System;
     using System.Net.Http;
     using System.Net.Http.Json;
+    using System.Text.RegularExpressions;
     using System.Threading.Tasks;
 
 #nullable enable
@@ -119,6 +120,24 @@ namespace Sportarr.Providers
 
             if (item is Series series)
             {
+                // When Game Thumbs is the selected image provider and the league is supported, the
+                // series poster comes from {GameThumbsUrl}/{code}/cover.png rather than the Sportarr API.
+                // Unsupported leagues fall through to the normal Sportarr image lookup below.
+                if (Options.ddlImageProvider == ImageProviderType.GameThumbs &&
+                    GameThumbsLeagues.TryGetLeagueCode(series.Name, null, out var leagueCode))
+                {
+                    var gameThumbsBase = Options.txtGameThumbsUrl.TrimEnd('/');
+                    images.Add(new RemoteImageInfo
+                    {
+                        Url = $"{gameThumbsBase}/{leagueCode}/cover.png",
+                        Type = ImageType.Primary,
+                        ProviderName = Name
+                    });
+
+                    _logger.Debug($"[Sportarr] Using Game Thumbs cover ({leagueCode}) for series: {series.Name}");
+                    return images;
+                }
+
                 if (string.IsNullOrEmpty(sportarrId))
                 {
                     return images;
@@ -205,11 +224,28 @@ namespace Sportarr.Providers
                     var url = $"{ApiUrl}/api/metadata/agents/episode/{sportarrId}";
                     var episodeData = await _httpClient.GetFromJsonAsync<SportarrEpisode>(url, cancellationToken);
 
-                    if (episodeData != null && !string.IsNullOrEmpty(episodeData.ThumbUrl))
+                    if (episodeData == null)
+                    {
+                        return images;
+                    }
+
+                    // When Game Thumbs is selected and the league is supported, the episode
+                    // thumbnail comes from {GameThumbsUrl}/{code}/{team1}/{team2}/thumb.png. If
+                    // Game Thumbs is off, the league is unsupported, or the teams are missing, fall
+                    // back to the fingerprinted Sportarr thumb_url.
+                    string? imageUrl = null;
+                    if (Options.ddlImageProvider == ImageProviderType.GameThumbs)
+                    {
+                        imageUrl = BuildGameThumbsEpisodeUrl(episode, episodeData);
+                    }
+
+                    imageUrl ??= episodeData.ThumbUrl;
+
+                    if (!string.IsNullOrEmpty(imageUrl))
                     {
                         images.Add(new RemoteImageInfo
                         {
-                            Url = episodeData.ThumbUrl,
+                            Url = imageUrl,
                             Type = ImageType.Primary,
                             ProviderName = Name
                         });
@@ -222,6 +258,46 @@ namespace Sportarr.Providers
             }
 
             return images;
+        }
+
+        /// <summary>
+        /// Builds the Game Thumbs thumbnail URL for an episode in the form
+        /// {GameThumbsUrl}/{leagueCode}/{team1}/{team2}/thumb.png.
+        /// Team order follows the event title: an "X at Y" title means the away team
+        /// is visiting and is named first, so the away team becomes team1; any other
+        /// form ("X vs Y", etc.) lists the home team first.
+        /// Returns null when the league is not supported by Game Thumbs, or when the
+        /// series name or either team is unavailable.
+        /// </summary>
+        /// <param name="episode">The episode item, used to resolve the series (league) name.</param>
+        /// <param name="episodeData">The episode data from the Sportarr API, providing the title and teams.</param>
+        /// <returns>The constructed Game Thumbs URL, or null if it cannot be built.</returns>
+        private string? BuildGameThumbsEpisodeUrl(Episode episode, SportarrEpisode episodeData)
+        {
+            var seriesName = episode.Series?.Name ?? episode.SeriesName;
+
+            // Sport is unknown here (episode data has no sport), so name-only league matching is used.
+            if (!GameThumbsLeagues.TryGetLeagueCode(seriesName, null, out var leagueCode))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(episodeData.HomeTeam) ||
+                string.IsNullOrEmpty(episodeData.AwayTeam))
+            {
+                _logger.Warn($"[Sportarr] Cannot build Game Thumbs episode URL (missing teams) for: {episodeData.Title}");
+                return null;
+            }
+
+            // "X at Y" => X is the away team visiting Y, so the away team is named first.
+            // Everything else ("X vs Y", etc.) lists the home team first.
+            var awayFirst = Regex.IsMatch(episodeData.Title ?? string.Empty, @"\bat\b", RegexOptions.IgnoreCase);
+
+            var team1 = awayFirst ? episodeData.AwayTeam : episodeData.HomeTeam;
+            var team2 = awayFirst ? episodeData.HomeTeam : episodeData.AwayTeam;
+
+            var gameThumbsBase = Options.txtGameThumbsUrl.TrimEnd('/');
+            return $"{gameThumbsBase}/{leagueCode}/{Uri.EscapeDataString(team1)}/{Uri.EscapeDataString(team2)}/thumb.png";
         }
 
         /// <summary>

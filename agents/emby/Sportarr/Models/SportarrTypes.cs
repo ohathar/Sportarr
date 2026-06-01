@@ -206,4 +206,24 @@ namespace Sportarr
     }
 
     #endregion
+
+    #region Game Thumbs (Health) Models
+
+    /// <summary>
+    /// Represents a Health Check response from a Game Thumbs instance.
+    /// Fields are nullable so the validator can distinguish "missing" from "present".
+    /// </summary>
+    public class GameThumbsHealthResponse
+    {
+        [JsonPropertyName("status")]
+        public string? Status { get; set; }
+
+        [JsonPropertyName("uptime")]
+        public double? Uptime { get; set; }
+
+        [JsonPropertyName("timestamp")]
+        public DateTime? Timestamp { get; set; }
+    }
+
+    #endregion
 }

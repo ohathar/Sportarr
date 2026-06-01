@@ -141,7 +141,13 @@ namespace Sportarr.Providers
                     series.AddStudio(response.Studio);
                 }
 
-                if (!string.IsNullOrEmpty(response.PosterUrl))
+                if (Options.ddlImageProvider == ImageProviderType.GameThumbs &&
+                    GameThumbsLeagues.TryGetLeagueCode(response.Title, response.Sport, out var leagueCode))
+                {
+                    var gameThumbsBase = Options.txtGameThumbsUrl.TrimEnd('/');
+                    result.SearchImageUrl = $"{gameThumbsBase}/{leagueCode}/cover.png";
+                }
+                else if (!string.IsNullOrEmpty(response.PosterUrl))
                 {
                     result.SearchImageUrl = response.PosterUrl;
                 }
